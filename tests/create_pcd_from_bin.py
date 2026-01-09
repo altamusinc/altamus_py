@@ -14,5 +14,5 @@ if file is None:
 
 scan = EOSV2Scan.from_binfile(file.absolute())
 
-scan.make_pcd("foobar.pcd")
-print(scan.to_json())
+pcd_filename = f"{file.stem}.pcd"
+scan.make_pcd(Path.joinpath(file.parent, pcd_filename).as_posix())

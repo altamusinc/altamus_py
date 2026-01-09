@@ -1,15 +1,20 @@
-from enum import Flag
+from enum import Flag, Enum
 import simplejson
 import struct
 import math
-import sys
+import io
+import os
 from pathlib import Path
-import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import altamus_py.mavlink as mavlink
 import numpy as np
 from pypcd4.pypcd4 import PointCloud, Encoding
 
+
+class PCDEncoding(Enum):
+    ASCII = Encoding.ASCII,
+    BINARY = Encoding.BINARY,
+    BINARY_COMPRESSED = Encoding.BINARY_COMPRESSED
 
 class PointFlags(Flag):
     HEALTHY = 1
@@ -22,17 +27,29 @@ class PointFlags(Flag):
 
 @dataclass
 class Preamble:
-    version: int | None = None
-    preamble_stop: int | None = None
-    notes_start: int | None = None
-    notes_stop: int | None = None
-    header_start: int | None = None
-    header_stop: int | None = None
-    points_start: int | None = None
-    points_stop: int | None = None
+    version: int = 0
+    preamble_stop: int = 0
+    notes_start: int = 0
+    notes_stop: int = 0
+    header_start: int = 0
+    header_stop: int = 0
+    points_start: int = 0
+    points_stop: int = 0
+
+    def to_bytes(self):
+        b = bytearray()
+        b += self.version.to_bytes()
+        b += self.preamble_stop.to_bytes()
+        b += self.notes_start.to_bytes()
+        b += self.notes_stop.to_bytes()
+        b += self.header_start.to_bytes()
+        b += self.header_stop.to_bytes()
+        b += self.points_start.to_bytes()
+        b += self.points_stop.to_bytes()
+        return b
 
     @classmethod
-    def parse_from_bytes(cls, data: bytes):
+    def from_bytes(cls, data: bytes):
         cursor = 0
 
         def read_and_increment():
@@ -104,8 +121,29 @@ class Header:
                     header.maximum_power = chapter
         return header
 
+    @classmethod
+    def from_dict(cls, dict: dict):
+        header = Header()
+
+        foo = dict.get("header")
+        if foo is None:
+            return header
+
+        header.identifier = foo.get("IDENTIFIER")
+        header.scan_settings = foo.get("SCAN_SETTINGS")
+        header.scan_transform = foo.get("SCAN_TRANSFORM")
+        header.lidar_settings = foo.get("LIDAR_SETTINGS")
+        header.pitch_motor_settings = foo.get("EOS_COMPONENT_PITCH_MOTOR")
+        header.yaw_motor_settings = foo.get("EOS_COMPONENT_YAW_MOTOR")
+        header.scan_result = foo.get("SCAN_RESULT_INFO")
+        header.orientation = foo.get("ORIENTATION")
+        header.average_power = foo.get("POWER_INFORMATION_TYPE_AVERAGE")
+        header.minimum_power = foo.get("POWER_INFORMATION_TYPE_MINIMUM")
+        header.maximum_power = foo.get("POWER_INFORMATION_TYPE_MAXIMUM")
+        return header
+
     def to_json(self) -> str:
-        return "TBI"
+        return simplejson.dumps(self.to_dict_annotated(), ignore_nan=True)
 
     def to_dict_annotated(self) -> dict:
         j = {}
@@ -133,16 +171,26 @@ class Header:
 
         return j
 
-
 @dataclass
 class RawPolarPoint:
     distance_cm: int
     pitch: int
     yaw: int
     return_strength: int
+    raw_bytes: bytes | None
+    fmt: str = "<HHHH"
 
     def to_list(self):
         return [self.distance_cm, self.pitch, self.yaw, self.return_strength]
+
+    def to_bytes(self) -> bytes:
+        return struct.pack(self.fmt, self.distance_cm, self.pitch, self.yaw, self.return_strength)
+
+    @classmethod
+    def from_bytes(cls, data):
+        dist, pitch_raw, yaw_raw, strength = struct.unpack_from(
+            RawPolarPoint.fmt, data)
+        return RawPolarPoint(distance_cm=dist, pitch=pitch_raw, yaw=yaw_raw, return_strength=strength, raw_bytes=data)
 
     def to_cartesian(self, roll_offset_deg: float, pitch_offset_deg: float, yaw_scale: float, pitch_scale: float):
         flags = PointFlags.HEALTHY
@@ -193,13 +241,67 @@ class CartesianPoint:
     strength: float
     point_flags: PointFlags
 
+
+@dataclass
+class EosV2BinFile:
+
+    file_path: Path | None = None
+    data: bytes | None = None
+
+    @classmethod
+    def from_file(cls, file_path: Path):
+        data: bytes
+        with open(file_path, "rb") as file:
+            data = file.read()
+        print(
+            f"Read in {len(data)} bytes from binfile {file_path.as_posix}")
+        return EosV2BinFile(file_path=file_path, data=data)
+
+    @classmethod
+    def from_bytes(cls, data: bytes):
+        return EosV2BinFile(file_path=None, data=data)
+
+    @property
+    def preamble(self) -> Preamble:
+        if self.data is None:
+            return Preamble()
+        return Preamble.from_bytes(self.data)
+
+    @property
+    def header_bytes(self) -> bytes:
+        if self.preamble.header_start is None or self.preamble.header_stop is None or self.data is None:
+            return bytes(0)
+        return self.data[self.preamble.header_start:self.preamble.header_stop + 1]
+
+    @property
+    def notes_bytes(self) -> bytes:
+        if self.preamble.notes_start is None or self.preamble.notes_stop is None or self.data is None:
+            return bytes(0)
+        return self.data[self.preamble.notes_start:self.preamble.notes_stop + 1]
+
+    @property
+    def points_bytes(self) -> bytes:
+        if self.preamble.points_start is None or self.preamble.points_stop is None or self.data is None:
+            return bytes(0)
+
+        # slice out all data after the points_start attribute
+        expected_points_data_length = self.preamble.points_stop - self.preamble.points_start
+        points_data = self.data[self.preamble.points_start:]
+        if expected_points_data_length > len(points_data):
+            print(
+                f"Expected {expected_points_data_length} bytes of point data, only got {len(points_data)}, returning what is available")
+        return points_data
+
+
 class EOSV2Scan:
-    preamble: Preamble
-    header: Header
-    notes = ""
-    polar_points: list[RawPolarPoint] = []
-    cartesian_points: list[CartesianPoint] = []
-    pcd = None
+    def __init__(self):
+        self.bin_file: EosV2BinFile | None
+        self.header: Header
+        self.notes = ""
+        self.points_data = np.array
+        self.polar_points: list[RawPolarPoint] = []
+        self.cartesian_points: list[CartesianPoint] = []
+        self.pcd = None
 
     @property
     def invalid_points_count(self) -> int:
@@ -229,18 +331,13 @@ class EOSV2Scan:
     def points_count(self) -> int:
         return len(self.cartesian_points)
 
-    def parse_polar_points_from_bytes(self, data: bytes):
+    def _parse_polar_points_from_bytes(self, data: bytes):
         self.polar_points.clear()
 
         # parse raw bytes into polar points
         for i in range(int(len(data) / 8)):
             point_bytes = data[(8*i):(8*i) + 8]
-            dist, pitch_raw, yaw_raw, strength = struct.unpack_from(
-                "<HHHH", point_bytes)
-            pitch = pitch_raw
-            yaw = yaw_raw
-            polar_point = RawPolarPoint(dist, pitch, yaw, strength)
-            self.polar_points.append(polar_point)
+            self.polar_points.append(RawPolarPoint.from_bytes(point_bytes))
 
     def create_cartesian_points_from_polar(self):
         self.cartesian_points.clear()
@@ -300,44 +397,107 @@ class EOSV2Scan:
             if point is not None:
                 arr.append(point)
 
+        # Write the header as a comment to the top line of the PCD
+        v_file = io.BytesIO()
+        header = {"header": self.header.to_dict_annotated(),
+                  "notes": self.notes}
+        v_file.write(f"#{simplejson.dumps(header, ignore_nan=True)}".encode())
+        v_file.write(f"\n\r".encode())
+
         np_arr = np.array(arr)
         pcd = PointCloud.from_points(np_arr, fields, types)
-        pcd.save(filename, encoding=Encoding.BINARY_COMPRESSED)
+        pcd.save(v_file, encoding=Encoding.BINARY_COMPRESSED)
+        with open(filename, mode="wb") as pcd_file:
+            pcd_file.write(v_file.getvalue())
 
     @classmethod
-    def from_binfile(cls, path_to_file):
-        with open(path_to_file, "rb") as file:
-            content = file.read()
-        return EOSV2Scan._parse_binfile_data(content)
+    def _extract_header_json_from_pcd_file(cls, path_to_file: Path) -> dict:
+        header_dict = {}
+        with open(path_to_file, mode='rb') as file:
+            for line in file:
+                line = line.decode()
+                if line.startswith("#") and not header_dict:
+                    line = line.replace("#", "")
+                    try:
+                        json = simplejson.loads(line)
+                        header_json = json
+                    except simplejson.JSONDecodeError:
+                        print("comment line not valid json, skipping")
+                else:
+                    break
+        return header_dict
 
     @classmethod
-    def from_stdin(cls, data):
-        return EOSV2Scan._parse_binfile_data(data)
+    def _find_header_in_pcd_file(cls, path_to_file: Path) -> Header:
+        return Header.from_dict(EOSV2Scan._extract_header_json_from_pcd_file(path_to_file))
 
     @classmethod
-    def _parse_binfile_data(cls, data):
+    def _find_notes_in_pcd_file(cls, path_to_file: Path) -> str:
+        notes = EOSV2Scan._extract_header_json_from_pcd_file(
+            path_to_file).get("notes")
+        if notes is None:
+            notes = ""
+        return notes
+
+    @classmethod
+    def _generate_preamble(cls, header: Header, notes: str, points: bytearray) -> Preamble:
+        print("TBI")
+        return Preamble()
+
+    @classmethod
+    def _pcd_to_binfile(cls, path_to_file: Path) -> EosV2BinFile:
+        header = EOSV2Scan._find_header_in_pcd_file(path_to_file)
+        notes = EOSV2Scan._find_notes_in_pcd_file(path_to_file)
+        points = EOSV2Scan._create_points_bytes_from_pcd(
+            PointCloud.from_path(path_to_file))
+        preamble = EOSV2Scan._generate_preamble(header, notes, points)
+        b = bytearray()
+        b += preamble.to_bytes()
+
+        return EosV2BinFile.from_bytes(b)
+        print("hello")
+
+    @classmethod
+    def _create_points_bytes_from_pcd(cls, point_cloud: PointCloud) -> bytearray:
+        points_bytes = bytearray()
+
+        for point in point_cloud.pc_data:
+            ppoint = RawPolarPoint(
+                distance_cm=point[6], pitch=point[4], yaw=point[5], return_strength=point[3], raw_bytes=None)
+            points_bytes += ppoint.to_bytes()
+        return points_bytes
+
+    @classmethod
+    def from_pcd(cls, path_to_file: Path):
+        bin_file = EOSV2Scan._pcd_to_binfile(path_to_file)
+        return EOSV2Scan()
+
+    @classmethod
+    def from_binfile(cls, path_to_file: Path):
         scan = EOSV2Scan()
+        scan.bin_file = EosV2BinFile.from_file(path_to_file)
+        scan._parse_binfile_data()
+        return scan
 
-        # Parse preamble from binfile
-        preamble = Preamble.parse_from_bytes(data)
-        scan.preamble = preamble
+    def _parse_binfile_data(self):
+        if self.bin_file is None:
+            return
+
+        preamble = self.bin_file.preamble
 
         # If preamble has header start/stop, parse the header
         if (preamble.header_start is not None and preamble.header_stop is not None):
-            scan.header = Header.parse_from_bytes(
-                data[preamble.header_start:preamble.header_stop + 1], mavlink)
+            self.header = Header.parse_from_bytes(
+                self.bin_file.header_bytes, mavlink)
 
         # If preamble has notes start/stop, parse them
         if (preamble.notes_start is not None and preamble.notes_stop is not None):
-            notes = data[preamble.notes_start: preamble.notes_stop + 1]
-            scan.notes = notes.decode().rstrip('\x00')
+            self.notes = self.bin_file.notes_bytes.decode().rstrip('\x00')
 
         # if preamble has points start, parse from there to the end of the file
         if (preamble.points_start is not None):
-            scan.parse_polar_points_from_bytes(data[preamble.points_start:])
-            scan.create_cartesian_points_from_polar()
-
-        return scan
+            self._parse_polar_points_from_bytes(self.bin_file.points_bytes)
+            self.create_cartesian_points_from_polar()
 
     def to_json(self) -> str:
         d = self.header.to_dict_annotated()
