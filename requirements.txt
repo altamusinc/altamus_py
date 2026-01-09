@@ -1,0 +1,5 @@
+pypcd4
+numpy
+simplejson
+setuptools
+open3d-cpu

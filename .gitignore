@@ -1,0 +1,4 @@
+build/
+dist/
+*.egg-info
+altamus_py/__pycache__/
