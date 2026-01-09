@@ -12,7 +12,7 @@ file = args.file
 if file is None:
     file = Path("./tests/sample_files/batch_plant.bin")
 
-scan = EOSV2Scan.from_binfile(file.absolute())
+scan = EOSV2Scan.from_path(file.absolute())
 
 pcd_filename = f"{file.stem}.pcd"
 scan.make_pcd(Path.joinpath(file.parent, pcd_filename).as_posix())

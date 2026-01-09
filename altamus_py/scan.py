@@ -38,14 +38,14 @@ class Preamble:
 
     def to_bytes(self):
         b = bytearray()
-        b += self.version.to_bytes()
-        b += self.preamble_stop.to_bytes()
-        b += self.notes_start.to_bytes()
-        b += self.notes_stop.to_bytes()
-        b += self.header_start.to_bytes()
-        b += self.header_stop.to_bytes()
-        b += self.points_start.to_bytes()
-        b += self.points_stop.to_bytes()
+        b += struct.pack("<I", self.version)
+        b += struct.pack("<I", self.preamble_stop)
+        b += struct.pack("<I", self.notes_start)
+        b += struct.pack("<I", self.notes_stop)
+        b += struct.pack("<I", self.header_start)
+        b += struct.pack("<I", self.header_stop)
+        b += struct.pack("<I", self.points_start)
+        b += struct.pack("<I", self.points_stop)
         return b
 
     @classmethod
@@ -129,18 +129,148 @@ class Header:
         if foo is None:
             return header
 
-        header.identifier = foo.get("IDENTIFIER")
-        header.scan_settings = foo.get("SCAN_SETTINGS")
-        header.scan_transform = foo.get("SCAN_TRANSFORM")
-        header.lidar_settings = foo.get("LIDAR_SETTINGS")
-        header.pitch_motor_settings = foo.get("EOS_COMPONENT_PITCH_MOTOR")
-        header.yaw_motor_settings = foo.get("EOS_COMPONENT_YAW_MOTOR")
-        header.scan_result = foo.get("SCAN_RESULT_INFO")
-        header.orientation = foo.get("ORIENTATION")
-        header.average_power = foo.get("POWER_INFORMATION_TYPE_AVERAGE")
-        header.minimum_power = foo.get("POWER_INFORMATION_TYPE_MINIMUM")
-        header.maximum_power = foo.get("POWER_INFORMATION_TYPE_MAXIMUM")
+        # Get the message data from the dict
+        identifier = foo.get("IDENTIFIER")
+        scan_settings = foo.get("SCAN_SETTINGS")
+        scan_transform = foo.get("SCAN_TRANSFORM")
+        lidar_settings = foo.get("LIDAR_SETTINGS")
+        pitch_motor_settings = foo.get("EOS_COMPONENT_PITCH_MOTOR")
+        yaw_motor_settings = foo.get("EOS_COMPONENT_YAW_MOTOR")
+        scan_result = foo.get("SCAN_RESULT_INFO")
+        orientation = foo.get("ORIENTATION")
+        average_power = foo.get("POWER_INFORMATION_TYPE_AVERAGE")
+        minimum_power = foo.get("POWER_INFORMATION_TYPE_MINIMUM")
+        maximum_power = foo.get("POWER_INFORMATION_TYPE_MAXIMUM")
+
+        # go through each one and create a mavlink object from the data
+        header.identifier = mavlink.MAVLink_identifier_message(
+            fw_version=identifier.get("fw_version"),
+            particle_id=identifier.get("particle_id").encode(),
+            device_id=identifier.get("device_id").encode(),
+            name=identifier.get("name").encode(),
+            local_ip=identifier.get("local_ip"),
+            mac=identifier.get("mac"))
+        header.scan_settings = mavlink.MAVLink_scan_settings_message(
+            yaw_start=scan_settings.get("yaw_start"),
+            yaw_stop=scan_settings.get("yaw_stop"),
+            pitch_start=scan_settings.get("pitch_start"),
+            pitch_stop=scan_settings.get("pitch_stop"),
+            pitch_rest_angle=scan_settings.get("pitch_rest_angle"),
+            point_spacing=scan_settings.get("point_spacing"),
+            scan_speed=scan_settings.get("scan_speed"),
+            scan_stop_reasons=scan_settings.get("scan_stop_reasons"))
+        header.scan_transform = mavlink.MAVLink_scan_transform_message(
+            roll_offset=scan_transform.get("roll_offset"),
+            pitch_offset=scan_transform.get("pitch_offset"),
+            pitch_scale=scan_transform.get("pitch_scale"),
+            yaw_scale=scan_transform.get("yaw_scale"),
+            range_scale=scan_transform.get("range_scale"),
+            max_range=scan_transform.get("max_range"))
+        header.lidar_settings = mavlink.MAVLink_lidar_settings_message(
+            update_rate=lidar_settings.get("update_rate"),
+            fog_mode_enable=lidar_settings.get("fog_mode_enable"),
+            output_disabled_at_boot=lidar_settings.get(
+                "output_disabled_at_boot"),
+            firmware_version=lidar_settings.get("firmware_version").encode())
+        header.pitch_motor_settings = mavlink.MAVLink_motor_settings_message(
+            motor=pitch_motor_settings.get("motor"),
+            current=pitch_motor_settings.get("current"),
+            microsteps=pitch_motor_settings.get("microsteps"),
+            gearing_ratio=pitch_motor_settings.get("gearing_ratio"),
+            spread_cycle=pitch_motor_settings.get("spread_cycle"),
+            pwm_autograd=pitch_motor_settings.get("pwm_autograd"),
+            pwm_autoscale=pitch_motor_settings.get("pwm_autoscale"),
+            home_offset_steps=pitch_motor_settings.get("home_offset_steps"),
+            enforce_minimum_steps=pitch_motor_settings.get(
+                "enforce_minimum_steps"),
+            steps_to_next_index=pitch_motor_settings.get(
+                "steps_to_next_index"),
+            usteps_rate=pitch_motor_settings.get("usteps_rate"),
+            ustep_angle=pitch_motor_settings.get("ustep_angle"))
+        header.yaw_motor_settings = mavlink.MAVLink_motor_settings_message(
+            motor=yaw_motor_settings.get("motor"),
+            current=yaw_motor_settings.get("current"),
+            microsteps=yaw_motor_settings.get("microsteps"),
+            gearing_ratio=yaw_motor_settings.get("gearing_ratio"),
+            spread_cycle=yaw_motor_settings.get("spread_cycle"),
+            pwm_autograd=yaw_motor_settings.get("pwm_autograd"),
+            pwm_autoscale=yaw_motor_settings.get("pwm_autoscale"),
+            home_offset_steps=yaw_motor_settings.get("home_offset_steps"),
+            enforce_minimum_steps=yaw_motor_settings.get(
+                "enforce_minimum_steps"),
+            steps_to_next_index=yaw_motor_settings.get("steps_to_next_index"),
+            usteps_rate=yaw_motor_settings.get("usteps_rate"),
+            ustep_angle=yaw_motor_settings.get("ustep_angle"))
+        header.scan_result = mavlink.MAVLink_scan_result_info_message(
+            type=scan_result.get("type"),
+            num_points=scan_result.get("num_points"),
+            file_size_bytes=scan_result.get("file_size_bytes"),
+            start_time_unix=scan_result.get("start_time_unix"),
+            end_time_unix=scan_result.get("end_time_unix"),
+            scan_duration=scan_result.get("scan_duration"),
+            scan_stop_reason=scan_result.get("scan_stop_reason"),
+            scan_start_reason=scan_result.get("scan_start_reason"))
+        header.orientation = mavlink.MAVLink_orientation_message(
+            roll=orientation.get("roll"),
+            pitch=orientation.get("pitch"),
+            temp=orientation.get("temp"),
+            xmag=orientation.get("xmag"),
+            ymag=orientation.get("ymag"),
+            zmag=orientation.get("zmag"),
+            heading=orientation.get("heading"),
+            lat=orientation.get("lat"),
+            lon=orientation.get("lon"),
+            h_acc=orientation.get("h_acc"),
+            v_acc=orientation.get("v_acc"),
+            alt=orientation.get("alt"))
+        header.average_power = mavlink.MAVLink_power_information_message(
+            type=average_power.get("type"),
+            current=average_power.get("current"),
+            voltage=average_power.get("voltage"),
+            power=average_power.get("power"),
+            energy_consumed=average_power.get("energy_consumed"),)
+        header.minimum_power = mavlink.MAVLink_power_information_message(
+            type=minimum_power.get("type"),
+            current=minimum_power.get("current"),
+            voltage=minimum_power.get("voltage"),
+            power=minimum_power.get("power"),
+            energy_consumed=minimum_power.get("energy_consumed"),)
+        header.maximum_power = mavlink.MAVLink_power_information_message(
+            type=maximum_power.get("type"),
+            current=maximum_power.get("current"),
+            voltage=maximum_power.get("voltage"),
+            power=maximum_power.get("power"),
+            energy_consumed=maximum_power.get("energy_consumed"),)
+
+        # return the mavlink based header
         return header
+
+    def to_bytes(self) -> bytes:
+        b = bytearray()
+        if self.identifier is not None:
+            b += self.identifier.pack(mavlink.MAVLink("", 1, 1))
+        if self.scan_settings is not None:
+            b += self.scan_settings.pack(mavlink.MAVLink("", 1, 1))
+        if self.scan_transform is not None:
+            b += self.scan_transform.pack(mavlink.MAVLink("", 1, 1))
+        if self.lidar_settings is not None:
+            b += self.lidar_settings.pack(mavlink.MAVLink("", 1, 1))
+        if self.pitch_motor_settings is not None:
+            b += self.pitch_motor_settings.pack(mavlink.MAVLink("", 1, 1))
+        if self.yaw_motor_settings is not None:
+            b += self.yaw_motor_settings.pack(mavlink.MAVLink("", 1, 1))
+        if self.scan_result is not None:
+            b += self.scan_result.pack(mavlink.MAVLink("", 1, 1))
+        if self.orientation is not None:
+            b += self.orientation.pack(mavlink.MAVLink("", 1, 1))
+        if self.average_power is not None:
+            b += self.average_power.pack(mavlink.MAVLink("", 1, 1))
+        if self.minimum_power is not None:
+            b += self.minimum_power.pack(mavlink.MAVLink("", 1, 1))
+        if self.maximum_power is not None:
+            b += self.maximum_power.pack(mavlink.MAVLink("", 1, 1))
+
+        return b
 
     def to_json(self) -> str:
         return simplejson.dumps(self.to_dict_annotated(), ignore_nan=True)
@@ -420,7 +550,7 @@ class EOSV2Scan:
                     line = line.replace("#", "")
                     try:
                         json = simplejson.loads(line)
-                        header_json = json
+                        header_dict = json
                     except simplejson.JSONDecodeError:
                         print("comment line not valid json, skipping")
                 else:
@@ -441,8 +571,15 @@ class EOSV2Scan:
 
     @classmethod
     def _generate_preamble(cls, header: Header, notes: str, points: bytearray) -> Preamble:
-        print("TBI")
-        return Preamble()
+        # FIXME something is borked in the spacing of the preamble between this parsed one and the scan. Some off by one errors with byte slicing. figure out later
+        preamble_stop = 31
+        notes_start = 32
+        notes_stop = notes_start + len(notes) - 1
+        header_start = notes_stop + 1
+        header_stop = header_start + len(header.to_bytes()) - 1
+        points_start = header_stop + 1
+        points_stop = points_start + len(points)
+        return Preamble(version=1, preamble_stop=preamble_stop, notes_start=notes_start, notes_stop=notes_stop, header_start=header_start, header_stop=header_stop, points_start=points_start, points_stop=points_stop)
 
     @classmethod
     def _pcd_to_binfile(cls, path_to_file: Path) -> EosV2BinFile:
@@ -453,9 +590,12 @@ class EOSV2Scan:
         preamble = EOSV2Scan._generate_preamble(header, notes, points)
         b = bytearray()
         b += preamble.to_bytes()
+        b += notes.encode()
+        b += header.to_bytes()
+        b += points
 
-        return EosV2BinFile.from_bytes(b)
-        print("hello")
+        binfile = EosV2BinFile.from_bytes(b)
+        return binfile
 
     @classmethod
     def _create_points_bytes_from_pcd(cls, point_cloud: PointCloud) -> bytearray:
@@ -470,10 +610,17 @@ class EOSV2Scan:
     @classmethod
     def from_pcd(cls, path_to_file: Path):
         bin_file = EOSV2Scan._pcd_to_binfile(path_to_file)
-        return EOSV2Scan()
+        return EOSV2Scan.from_bin_file(bin_file)
 
     @classmethod
-    def from_binfile(cls, path_to_file: Path):
+    def from_bin_file(cls, bin_file: EosV2BinFile):
+        scan = EOSV2Scan()
+        scan.bin_file = bin_file
+        scan._parse_binfile_data()
+        return scan
+
+    @classmethod
+    def from_path(cls, path_to_file: Path):
         scan = EOSV2Scan()
         scan.bin_file = EosV2BinFile.from_file(path_to_file)
         scan._parse_binfile_data()
@@ -508,3 +655,19 @@ class EOSV2Scan:
         d["POINTS"] = polar_points_list
         j = simplejson.dumps(d, ignore_nan=True)
         return j
+
+
+def pack_mavlink_msg_payload(msg: mavlink.MAVLink_message) -> bytes:
+    args = []
+    for field in msg.ordered_fieldnames:
+        foo = getattr(msg, field)
+        if type(foo) is str:
+            args.append(foo.encode())
+        elif type(foo) is list:
+            for entry in foo:
+                args.append(entry)
+        else:
+            args.append(foo)
+
+    foo = msg.unpacker.pack(*args)
+    return foo
