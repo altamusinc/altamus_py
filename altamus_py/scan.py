@@ -3,9 +3,8 @@ import simplejson
 import struct
 import math
 import io
-import os
 from pathlib import Path
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 import altamus_py.mavlink as mavlink
 import numpy as np
 from pypcd4.pypcd4 import PointCloud, Encoding
@@ -692,19 +691,3 @@ class EOSV2Scan:
         d["POINTS"] = polar_points_list
         j = simplejson.dumps(d, ignore_nan=True)
         return j
-
-
-def pack_mavlink_msg_payload(msg: mavlink.MAVLink_message) -> bytes:
-    args = []
-    for field in msg.ordered_fieldnames:
-        foo = getattr(msg, field)
-        if type(foo) is str:
-            args.append(foo.encode())
-        elif type(foo) is list:
-            for entry in foo:
-                args.append(entry)
-        else:
-            args.append(foo)
-
-    foo = msg.unpacker.pack(*args)
-    return foo
