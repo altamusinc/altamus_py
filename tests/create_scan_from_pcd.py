@@ -7,4 +7,4 @@ scan = EOSV2Scan.from_pcd(file)
 
 # Re-export that same scan file to another PCD. should match the original pcd
 pcd_filename = f"{file.stem}_from_pcd.pcd"
-scan.make_pcd(Path.joinpath(file.parent, pcd_filename).as_posix())
+scan.save_pcd_to_file(Path.joinpath(file.parent, pcd_filename).as_posix())

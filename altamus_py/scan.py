@@ -431,7 +431,7 @@ class EOSV2Scan:
         self.points_data = np.array
         self.polar_points: list[RawPolarPoint] = []
         self.cartesian_points: list[CartesianPoint] = []
-        self.pcd = None
+        self.pcd: PointCloud | None = None
 
     @property
     def invalid_points_count(self) -> int:
@@ -461,6 +461,10 @@ class EOSV2Scan:
     def points_count(self) -> int:
         return len(self.cartesian_points)
 
+    def apply_new_transform_to_scan(self, transform: mavlink.MAVLink_scan_transform_message):
+        self.header.scan_transform = transform
+        self.create_cartesian_points_from_polar()
+
     def _parse_polar_points_from_bytes(self, data: bytes):
         self.polar_points.clear()
 
@@ -468,6 +472,31 @@ class EOSV2Scan:
         for i in range(int(len(data) / 8)):
             point_bytes = data[(8*i):(8*i) + 8]
             self.polar_points.append(RawPolarPoint.from_bytes(point_bytes))
+
+    # returns a tuple of [overlap in degrees, beginning_points (low yaw angle), ending_points (high yaw angle)]
+    @property
+    def yaw_overlap_points(self) -> tuple[float, np.ndarray, np.ndarray]:
+        if self.pcd is None:
+            print("PCD is none, creating one")
+            self.pcd = self.make_pcd()
+
+        full_arr: np.ndarray = self.pcd.numpy()
+        # creates a boolean index array
+        overlap_bool = full_arr[:, 5] > (math.pi * 10000)
+        # creates new array based on above boolean mask
+        overlap_array = full_arr[overlap_bool]
+
+        # get min and max yaw values. Subtract them to get the yaw range. This is where we'll select from to get the "primary" points
+        overlap_min_yaw = overlap_array[0][5]
+        overlap_max_yaw = overlap_array[-1][5]
+        range = math.degrees((overlap_max_yaw - overlap_min_yaw) / 10000)
+        # print(f"Overlap Range of {range}")
+
+        # Get all points who's yaw is under the max value of the overlap minus 180 degrees (Pi)
+        primary_bool = full_arr[:, 5] < overlap_max_yaw - (math.pi * 10000)
+        primary_array = full_arr[primary_bool]
+        return range, primary_array, overlap_array
+
 
     def create_cartesian_points_from_polar(self):
         self.cartesian_points.clear()
@@ -488,10 +517,27 @@ class EOSV2Scan:
             self.cartesian_points.append(polar_point.to_cartesian(
                 roll_offset_deg=roll_offet, pitch_offset_deg=pitch_offset, yaw_scale=yaw_scale, pitch_scale=pitch_scale))
 
+    def save_pcd_to_file(self, filename: str):
+        if self.pcd is None:
+            print("PCD is null, generate one first with make_pcd()")
+            return
+
+        # Write the header as a comment to the top line of the PCD
+        v_file = io.BytesIO()
+        header = {"header": self.header.to_dict_annotated(),
+                  "notes": self.notes}
+        v_file.write(f"#{simplejson.dumps(header, ignore_nan=True)}".encode())
+        v_file.write(f"\n\r".encode())
+
+        # write the pcd file
+        self.pcd.save(v_file, encoding=Encoding.BINARY_COMPRESSED)
+
+        # save to filesystem
+        with open(filename, mode="wb") as pcd_file:
+            pcd_file.write(v_file.getvalue())
 
     # Parse polar points into cartesian points and save to a pcd
-
-    def make_pcd(self, filename: str, with_polar: bool = True, with_invalid_points=True):
+    def make_pcd(self, with_polar: bool = True, with_invalid_points=True) -> PointCloud:
         # All versions have xyzi fields
         fields = ("x", "y", "z", "intensity")
         types = (np.float32, np.float32, np.float32, np.int16)
@@ -527,18 +573,9 @@ class EOSV2Scan:
             if point is not None:
                 arr.append(point)
 
-        # Write the header as a comment to the top line of the PCD
-        v_file = io.BytesIO()
-        header = {"header": self.header.to_dict_annotated(),
-                  "notes": self.notes}
-        v_file.write(f"#{simplejson.dumps(header, ignore_nan=True)}".encode())
-        v_file.write(f"\n\r".encode())
-
         np_arr = np.array(arr)
-        pcd = PointCloud.from_points(np_arr, fields, types)
-        pcd.save(v_file, encoding=Encoding.BINARY_COMPRESSED)
-        with open(filename, mode="wb") as pcd_file:
-            pcd_file.write(v_file.getvalue())
+        self.pcd = PointCloud.from_points(np_arr, fields, types)
+        return self.pcd
 
     @classmethod
     def _extract_header_json_from_pcd_file(cls, path_to_file: Path) -> dict:

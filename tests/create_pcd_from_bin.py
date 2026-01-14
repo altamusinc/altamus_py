@@ -15,4 +15,5 @@ if file is None:
 scan = EOSV2Scan.from_path(file.absolute())
 
 pcd_filename = f"{file.stem}.pcd"
-scan.make_pcd(Path.joinpath(file.parent, pcd_filename).as_posix())
+scan.make_pcd()
+scan.save_pcd_to_file(Path.joinpath(file.parent, pcd_filename).as_posix())
