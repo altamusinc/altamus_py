@@ -158,6 +158,7 @@ def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
 
 file = Path("./tests/sample_files/batch_plant.bin")
 scan = EOSV2Scan.from_path(file)
+print(scan.cartesian_points_numpy)
 print(f"Transform in binfile: {scan.header.scan_transform}")
 transform = mavlink.MAVLink_scan_transform_message(
     roll_offset=0,

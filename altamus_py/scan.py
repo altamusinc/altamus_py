@@ -427,7 +427,10 @@ class EOSV2Scan:
         self.bin_file: EosV2BinFile | None
         self.header: Header
         self.notes = ""
-        self.points_data = np.array
+
+        self.polar_points_array: np.ndarray = np.empty((0, 4))
+        self.cartesian_points_array: np.ndarray
+
         self.polar_points: list[RawPolarPoint] = []
         self.cartesian_points: list[CartesianPoint] = []
         self.pcd: PointCloud | None = None
@@ -460,17 +463,70 @@ class EOSV2Scan:
     def points_count(self) -> int:
         return len(self.cartesian_points)
 
+    @property
+    def cartesian_points_numpy(self):
+        def pol2cart(pitch, yaw, distance_cm):
+            flags = PointFlags.HEALTHY
+            # if distance_cm == 65535:
+            #     # -2, no reply at all from lidar
+            #     flags = PointFlags.NO_RESPONSE
+            # elif distance_cm == 0:
+            #     # no reading from lidar, pointted at sky
+            #     flags = PointFlags.NO_RETURN
+            # elif distance_cm < 100:
+            #     # Hard coded minimum distance below which we shouldn't show
+            #     flags = PointFlags.TOO_CLOSE
+            # elif distance_cm > 15000:
+            #     # Hard coded maximum distance, 150 meters. Above this, dont show.
+            #     flags = PointFlags.TOO_FAR
+
+            if PointFlags.HEALTHY in flags:
+                radius_meters = distance_cm / 100.0
+            else:
+                # Doing this will project all the error points onto a 50 cm sphere about the origin, allowing the ability to see where in the orbit points are failing
+                radius_meters = 0.5
+
+            pitch_radians = pitch / 10000
+            yaw_radians = yaw / 10000
+            roll_offset_radians = np.radians(
+                self.header.scan_transform.roll_offset)
+            pitch_offset_radians = np.radians(
+                self.header.scan_transform.pitch_offset)
+
+            pitch_adjusted_radians = pitch_radians + pitch_offset_radians
+
+            x = np.cos(yaw_radians) * np.sin(pitch_adjusted_radians) * np.cos(
+                roll_offset_radians) + np.sin(yaw_radians) * np.sin(roll_offset_radians)
+            y = np.sin(yaw_radians) * np.sin(pitch_adjusted_radians) * np.cos(
+                roll_offset_radians) - np.cos(yaw_radians) * np.sin(roll_offset_radians)
+            z = np.cos(pitch_adjusted_radians) * np.cos(roll_offset_radians)
+
+            x = x * radius_meters
+            y = y * radius_meters
+            z = z * radius_meters
+            return x, y, z
+
+        print("Hello")
+        pitch = self.polar_points_array[:, 1]
+        yaw = self.polar_points_array[:, 2]
+        distance = self.polar_points_array[:, 0]
+        x, y, z = pol2cart(pitch, yaw, distance)
+        print("Done")
+
+
     def apply_new_transform_to_scan(self, transform: mavlink.MAVLink_scan_transform_message):
         self.header.scan_transform = transform
         self.create_cartesian_points_from_polar()
 
     def _parse_polar_points_from_bytes(self, data: bytes):
-        self.polar_points.clear()
 
         # parse raw bytes into polar points
-        for i in range(int(len(data) / 8)):
-            point_bytes = data[(8*i):(8*i) + 8]
-            self.polar_points.append(RawPolarPoint.from_bytes(point_bytes))
+        numpoints = int(len(data) / 8)
+        foo = np.frombuffer(data, dtype=np.uint16)
+
+        # Reshape to correct shape for easier column based parsing later
+        self.polar_points_array = foo.reshape((numpoints, 4))
+        print("done")
 
     # returns a tuple of [overlap in degrees, beginning_points (low yaw angle), ending_points (high yaw angle)]
     @property
