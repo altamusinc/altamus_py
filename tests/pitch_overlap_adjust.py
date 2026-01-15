@@ -149,26 +149,23 @@ def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
     print(f"Best Transform: {best_transform}")
     return getattr(best_transform, attr)
 
-
-
 file = Path("./tests/sample_files/batch_plant.bin")
 scan = EOSV2Scan.from_path(file)
-xyz = scan.cartesian_points_numpy
-print(scan.cartesian_points_numpy)
 print(f"Transform in binfile: {scan.header.scan_transform}")
-transform = mavlink.MAVLink_scan_transform_message(
-    roll_offset=0,
-    pitch_offset=0,
-    pitch_scale=1.0,
-    yaw_scale=1.0,
-    range_scale=1.0,
-    max_range=18000)
-print("Resetting to 0 for testing")
-scan.apply_new_transform_to_scan(transform=transform)
+transform = copy.deepcopy(scan.header.scan_transform)
+# transform = mavlink.MAVLink_scan_transform_message(
+#     roll_offset=0,
+#     pitch_offset=0,
+#     pitch_scale=1.0,
+#     yaw_scale=1.0,
+#     range_scale=1.0,
+#     max_range=18000)
+# print("Resetting to 0 for testing")
+# scan.apply_new_transform_to_scan(transform=transform)
 
 transform.pitch_offset = adjust_parameter(scan, TargetParameter.PITCH)
 scan.apply_new_transform_to_scan(transform=transform)
-transform.roll_offset = adjust_parameter(scan, TargetParameter.ROLL)
-scan.apply_new_transform_to_scan(transform=transform)
-evaluate(scan, visualize=True)
+# transform.roll_offset = adjust_parameter(scan, TargetParameter.ROLL)
+# scan.apply_new_transform_to_scan(transform=transform)
+# evaluate(scan, visualize=True)
 print("end")

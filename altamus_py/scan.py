@@ -522,7 +522,6 @@ class EOSV2Scan:
 
         # Reshape to correct shape for easier column based parsing later
         self.polar_points_array = foo.reshape((numpoints, 4))
-        print("done")
 
     # returns a tuple of [overlap in degrees, beginning_points (low yaw angle), ending_points (high yaw angle)]
     @property
