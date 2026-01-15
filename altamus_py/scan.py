@@ -473,7 +473,7 @@ class EOSV2Scan:
         primary_array = full_arr[primary_bool]
         return range, primary_array, overlap_array
 
-    def save_pcd_to_file(self, filename: str):
+    def save_pcd_to_file(self, filename: Path):
         pcd = self.make_pcd()
 
         # Write the header as a comment to the top line of the PCD
@@ -531,7 +531,7 @@ class EOSV2Scan:
         return notes
 
     @classmethod
-    def _generate_preamble(cls, header: Header, notes: str, points: bytearray) -> Preamble:
+    def _generate_preamble(cls, header: Header, notes: str, points: bytes) -> Preamble:
         # FIXME something is borked in the spacing of the preamble between this parsed one and the scan. Some off by one errors with byte slicing. figure out later
         preamble_stop = 31
         notes_start = 32
@@ -559,14 +559,10 @@ class EOSV2Scan:
         return binfile
 
     @classmethod
-    def _create_points_bytes_from_pcd(cls, point_cloud: PointCloud) -> bytearray:
-        points_bytes = bytearray()
-
-        for point in point_cloud.pc_data:
-            ppoint = RawPolarPoint(
-                distance_cm=point[6], pitch=point[4], yaw=point[5], return_strength=point[3], raw_bytes=None)
-            points_bytes += ppoint.to_bytes()
-        return points_bytes
+    def _create_points_bytes_from_pcd(cls, point_cloud: PointCloud) -> bytes:
+        polar_data = point_cloud.numpy()[:,-4:] # convert the pcd to numpy, and slice out last 4 columns which are dist, pitch, yaw, intensity
+        polar_data = polar_data.astype('<u2') # convert to little endian uint16_t
+        return polar_data.tobytes()
 
     @classmethod
     def from_pcd(cls, path_to_file: Path):
