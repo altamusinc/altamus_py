@@ -1,3 +1,9 @@
 {
-  "image": "mcr.microsoft.com/devcontainers/python:3.12"
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "customizations": {
+    "vscode": {
+      "extensions": ["azurity.pcd-viewer"]
+    }
+  },
+  "postCreateCommand": "pip install -r requirements.txt; pip install -e ."
 }

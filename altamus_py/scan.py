@@ -313,7 +313,7 @@ class EosV2BinFile:
         with open(file_path, "rb") as file:
             data = file.read()
         print(
-            f"Read in {len(data)} bytes from binfile {file_path.as_posix}")
+            f"Read in {len(data)} bytes from binfile {file_path.as_posix()}")
         return EosV2BinFile(file_path=file_path, data=data)
 
     @classmethod
@@ -357,40 +357,57 @@ class EOSV2Scan:
         self.bin_file: EosV2BinFile | None
         self.header: Header
         self.notes = ""
-        self.polar_points_array: np.ndarray = np.empty(
+        self.polar_points: np.ndarray = np.empty(
             (0, 4))  # distance, pitch, yaw, intensity
 
     @property
+    def healthy_cartesian_points(self):
+        return None
+    
+    
+    @property
+    def healthy_points_count(self) -> int:
+        pts = np.where(self.cartesian_points[:, 3] == PointFlags.HEALTHY.value)
+        return len(pts[0])
+    
+    @property
     def no_response_points_count(self) -> int:
         pts = np.where(
-            self.cartesian_points_numpy[:, 3] != PointFlags.NO_RESPONSE.value)
-        return pts[0].size
+            self.cartesian_points[:, 3] == PointFlags.NO_RESPONSE.value)
+        return len(pts[0])
 
     @property
     def no_return_points_count(self) -> int:
         pts = np.where(
-            self.cartesian_points_numpy[:, 3] == PointFlags.NO_RETURN.value)
-        return pts[0].size
+            self.cartesian_points[:, 3] == PointFlags.NO_RETURN.value)
+        return len(pts[0])
 
     @property
     def too_close_points_count(self) -> int:
         pts = np.where(
-            self.cartesian_points_numpy[:, 3] == PointFlags.TOO_CLOSE.value)
-        return pts[0].size
+            self.cartesian_points[:, 3] == PointFlags.TOO_CLOSE.value)
+        return len(pts[0])
 
     @property
     def too_far_points_count(self) -> int:
         pts = np.where(
-            self.cartesian_points_numpy[:, 3] == PointFlags.TOO_FAR.value)
-        return pts[0].size
+            self.cartesian_points[:, 3] == PointFlags.TOO_FAR.value)
+        return len(pts[0])
 
     @property
     def points_count(self) -> int:
-        return self.polar_points_array.size
-
+        return len(self.polar_points)
 
     @property
-    def cartesian_points_numpy(self):
+    def combined_points(self) -> np.ndarray:
+        """
+        Returns combined polar and carteisan points as numpy array. Columns are: X, Y, Z, Flags, Distance, Pitch, Yaw, Intensity
+        
+        """
+        return np.hstack((self.cartesian_points, self.polar_points))
+
+    @property
+    def cartesian_points(self):
         def pol2cart(pitch, yaw, distance_cm):
             transform = copy.deepcopy(self.header.scan_transform)
             if transform is None:
@@ -434,11 +451,17 @@ class EOSV2Scan:
             z = z * radius_meters
             return np.stack((x, y, z, flags), axis=1)
 
-        pitch = self.polar_points_array[:, 1]
-        yaw = self.polar_points_array[:, 2]
-        distance = self.polar_points_array[:, 0]
+        pitch = self.polar_points[:, 1]
+        yaw = self.polar_points[:, 2]
+        distance = self.polar_points[:, 0]
         return pol2cart(pitch, yaw, distance)
 
+    def get_filtered_points(self, point_types_to_get: list[PointFlags]):
+        values = np.array([member.value for member in point_types_to_get])
+        flags = self.combined_points[:, 3]
+        mask = np.isin(flags, values)
+        filtered = self.combined_points[mask]
+        return filtered
 
     def apply_new_transform_to_scan(self, transform: mavlink.MAVLink_scan_transform_message):
         self.header.scan_transform = transform
@@ -450,17 +473,15 @@ class EOSV2Scan:
         foo = np.frombuffer(data, dtype=np.uint16)
 
         # Reshape to correct shape for easier column based parsing later
-        self.polar_points_array = foo.reshape((numpoints, 4))
+        self.polar_points = foo.reshape((numpoints, 4))
 
     # returns a tuple of [overlap in degrees, beginning_points (low yaw angle), ending_points (high yaw angle)]
     @property
     def yaw_overlap_points(self) -> tuple[float, np.ndarray, np.ndarray]:
-        full_arr = np.hstack(
-            (self.cartesian_points_numpy, self.polar_points_array))
         # creates a boolean index array
-        overlap_bool = full_arr[:, 6] > (np.pi * 10000)
+        overlap_bool = self.combined_points[:, 6] > (np.pi * 10000)
         # creates new array based on above boolean mask
-        overlap_array = full_arr[overlap_bool]
+        overlap_array = self.combined_points[overlap_bool]
 
         # get min and max yaw values. Subtract them to get the yaw range. This is where we'll select from to get the "primary" points
         overlap_min_yaw = overlap_array[0][6]
@@ -469,12 +490,12 @@ class EOSV2Scan:
         # print(f"Overlap Range of {range}")
 
         # Get all points who's yaw is under the max value of the overlap minus 180 degrees (Pi)
-        primary_bool = full_arr[:, 6] < overlap_max_yaw - (np.pi * 10000)
-        primary_array = full_arr[primary_bool]
+        primary_bool = self.combined_points[:, 6] < overlap_max_yaw - (np.pi * 10000)
+        primary_array = self.combined_points[primary_bool]
         return range, primary_array, overlap_array
 
-    def save_pcd_to_file(self, filename: Path):
-        pcd = self.make_pcd()
+    def save_annotated_pcd_to_file(self, filename: Path, include_error_points: bool = True):
+        pcd = self.as_pcd(include_error_points)
 
         # Write the header as a comment to the top line of the PCD
         v_file = io.BytesIO()
@@ -490,16 +511,18 @@ class EOSV2Scan:
         with open(filename, mode="wb") as pcd_file:
             pcd_file.write(v_file.getvalue())
 
-    def make_pcd(self) -> PointCloud:
-        # All versions have xyzi fields
+    def as_pcd(self, include_error_points: bool = True) -> PointCloud:
+        if include_error_points:
+            points = self.combined_points
+        else:
+            points = self.get_filtered_points([PointFlags.HEALTHY])
+
         fields = ("x", "y", "z", "flags", "distance",
                   "pitch", "yaw", "intensity")
         types = (np.float32, np.float32, np.float32, np.uint8,
                  np.int16, np.uint16, np.uint16, np.uint16,)
-        np_arr = np.hstack(
-            (self.cartesian_points_numpy, self.polar_points_array))
 
-        return PointCloud.from_points(np_arr, fields, types)
+        return PointCloud.from_points(points, fields, types)
 
     @classmethod
     def _extract_header_json_from_pcd_file(cls, path_to_file: Path) -> dict:
@@ -604,7 +627,7 @@ class EOSV2Scan:
 
     def polar_points_to_json(self) -> str:
         d = self.header.to_dict_annotated()
-        points = self.polar_points_array.copy().astype(np.float32)
+        points = self.polar_points.copy().astype(np.float32)
         pitch_degrees = np.rad2deg(points[:, 1] / 10000)
         yaw_degrees = np.rad2deg(points[:, 2] / 10000)
 
