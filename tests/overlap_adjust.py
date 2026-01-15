@@ -10,6 +10,7 @@ import open3d as o3d
 import copy
 import scipy
 import json
+import time
 from pathlib import Path
 from enum import Enum
 
@@ -62,7 +63,7 @@ def output_hyperion_translations(input_transform: np.ndarray):
 
 
 def evaluate(scan: EOSV2Scan, visualize: bool = False) -> o3d.cpu.pybind.pipelines.registration.RegistrationResult:
-
+    start_time = time.perf_counter()
     overlap, beginning, end = scan.yaw_overlap_points
 
     # find the matching yaw range in the "primary" portion and extract them into their own pcd
@@ -70,18 +71,16 @@ def evaluate(scan: EOSV2Scan, visualize: bool = False) -> o3d.cpu.pybind.pipelin
     primary_pcd = o3d.geometry.PointCloud()
     primary_pcd.points = o3d.utility.Vector3dVector(
         beginning[:, 0:3])  # slicing out just the first 3 (x,y,z)
-    primary_pcd.paint_uniform_color([1, 0.706, 0])
 
     overlap_pcd = o3d.geometry.PointCloud()
     overlap_pcd.points = o3d.utility.Vector3dVector(end[:, 0:3])
-    overlap_pcd.paint_uniform_color([0, 0.651, 0.929])
 
     evaluation = o3d.pipelines.registration.evaluate_registration(
         primary_pcd, overlap_pcd, 5)
-
     print(f"{evaluation.inlier_rmse} \t transform: {scan.header.scan_transform}")
-
     if visualize:
+        primary_pcd.paint_uniform_color([1, 0.706, 0])
+        overlap_pcd.paint_uniform_color([0, 0.651, 0.929])
         o3d.visualization.draw_geometries([overlap_pcd, primary_pcd])
     return evaluation
 
@@ -108,11 +107,9 @@ def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
     setattr(negative_transform, attr, getattr(starting_transform, attr) - coarse_increment_amount)
 
     scan.apply_new_transform_to_scan(positive_transform)
-    scan.make_pcd()
     positive_score = evaluate(scan)
 
     scan.apply_new_transform_to_scan(negative_transform)
-    scan.make_pcd()
     negative_score = evaluate(scan)
 
     print(f"initial_score: {initial_score.inlier_rmse}")
@@ -135,7 +132,6 @@ def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
     iterations = 100
     i = 0
     while i < iterations:
-
         if direction is IncrementDirection.POSITIVE:
             new_val = getattr(working_transform, attr) + fine_increment_amount
         else:
@@ -143,10 +139,9 @@ def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
 
         setattr(working_transform, attr, new_val)
         scan.apply_new_transform_to_scan(working_transform)
-        scan.make_pcd()
         score = evaluate(scan)
         if score.inlier_rmse < best_score.inlier_rmse:
-            print("new best!")
+            # print("new best!")
             best_score = copy.deepcopy(score)
             best_transform = copy.deepcopy(working_transform)
         i += 1
@@ -158,6 +153,7 @@ def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
 
 file = Path("./tests/sample_files/batch_plant.bin")
 scan = EOSV2Scan.from_path(file)
+xyz = scan.cartesian_points_numpy
 print(scan.cartesian_points_numpy)
 print(f"Transform in binfile: {scan.header.scan_transform}")
 transform = mavlink.MAVLink_scan_transform_message(
@@ -169,12 +165,10 @@ transform = mavlink.MAVLink_scan_transform_message(
     max_range=18000)
 print("Resetting to 0 for testing")
 scan.apply_new_transform_to_scan(transform=transform)
-scan.make_pcd()
 
 transform.pitch_offset = adjust_parameter(scan, TargetParameter.PITCH)
 scan.apply_new_transform_to_scan(transform=transform)
 transform.roll_offset = adjust_parameter(scan, TargetParameter.ROLL)
 scan.apply_new_transform_to_scan(transform=transform)
-scan.make_pcd()
 evaluate(scan, visualize=True)
 print("end")
