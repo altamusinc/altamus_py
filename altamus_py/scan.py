@@ -7,6 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass
 import altamus_py.mavlink as mavlink
 import numpy as np
+import copy
 from pypcd4.pypcd4 import PointCloud, Encoding
 
 
@@ -429,8 +430,6 @@ class EOSV2Scan:
         self.notes = ""
 
         self.polar_points_array: np.ndarray = np.empty((0, 4))
-        self.cartesian_points_array: np.ndarray
-
         self.polar_points: list[RawPolarPoint] = []
         self.cartesian_points: list[CartesianPoint] = []
         self.pcd: PointCloud | None = None
@@ -466,32 +465,34 @@ class EOSV2Scan:
     @property
     def cartesian_points_numpy(self):
         def pol2cart(pitch, yaw, distance_cm):
-            flags = PointFlags.HEALTHY
-            # if distance_cm == 65535:
-            #     # -2, no reply at all from lidar
-            #     flags = PointFlags.NO_RESPONSE
-            # elif distance_cm == 0:
-            #     # no reading from lidar, pointted at sky
-            #     flags = PointFlags.NO_RETURN
-            # elif distance_cm < 100:
-            #     # Hard coded minimum distance below which we shouldn't show
-            #     flags = PointFlags.TOO_CLOSE
-            # elif distance_cm > 15000:
-            #     # Hard coded maximum distance, 150 meters. Above this, dont show.
-            #     flags = PointFlags.TOO_FAR
+            transform = copy.deepcopy(self.header.scan_transform)
+            if transform is None:
+                print("no transform in the header, using a default value")
+                transform = mavlink.MAVLink_scan_transform_message(
+                    roll_offset=0,
+                    pitch_offset=0,
+                    pitch_scale=1.0,
+                    yaw_scale=1.0,
+                    range_scale=1.0,
+                    max_range=18000)
 
-            if PointFlags.HEALTHY in flags:
-                radius_meters = distance_cm / 100.0
-            else:
-                # Doing this will project all the error points onto a 50 cm sphere about the origin, allowing the ability to see where in the orbit points are failing
-                radius_meters = 0.5
+            flags = np.full(shape=pitch.shape,
+                            fill_value=PointFlags.HEALTHY.value)
+            # TODO order is too important here, if we don't do it exactly like this they'll overwrite each other
+            flags[distance_cm > transform.max_range] = PointFlags.TOO_FAR.value
+            flags[distance_cm < 100] = PointFlags.TOO_CLOSE.value
+            flags[distance_cm == 65535] = PointFlags.NO_RESPONSE.value
+            flags[distance_cm == 0] = PointFlags.NO_RETURN.value
 
+            error_mask = flags != PointFlags.HEALTHY.value
+            radius_meters = distance_cm / 100.0
+            radius_meters[error_mask] = 0.5
             pitch_radians = pitch / 10000
             yaw_radians = yaw / 10000
             roll_offset_radians = np.radians(
-                self.header.scan_transform.roll_offset)
+                transform.roll_offset)
             pitch_offset_radians = np.radians(
-                self.header.scan_transform.pitch_offset)
+                transform.pitch_offset)
 
             pitch_adjusted_radians = pitch_radians + pitch_offset_radians
 
@@ -504,14 +505,12 @@ class EOSV2Scan:
             x = x * radius_meters
             y = y * radius_meters
             z = z * radius_meters
-            return x, y, z
+            return np.stack((x, y, z, flags), axis=1)
 
-        print("Hello")
         pitch = self.polar_points_array[:, 1]
         yaw = self.polar_points_array[:, 2]
         distance = self.polar_points_array[:, 0]
-        x, y, z = pol2cart(pitch, yaw, distance)
-        print("Done")
+        return pol2cart(pitch, yaw, distance)
 
 
     def apply_new_transform_to_scan(self, transform: mavlink.MAVLink_scan_transform_message):
@@ -591,8 +590,21 @@ class EOSV2Scan:
         with open(filename, mode="wb") as pcd_file:
             pcd_file.write(v_file.getvalue())
 
+    def make_pcd(self) -> PointCloud:
+        # All versions have xyzi fields
+        fields = ("x", "y", "z", "flags", "distance",
+                  "pitch", "yaw", "intensity")
+        types = (np.float32, np.float32, np.float32, np.uint8,
+                 np.int16, np.uint16, np.uint16, np.uint16,)
+        np_arr = np.hstack(
+            (self.cartesian_points_numpy, self.polar_points_array))
+
+        self.pcd = PointCloud.from_points(np_arr, fields, types)
+
+        return self.pcd
+
     # Parse polar points into cartesian points and save to a pcd
-    def make_pcd(self, with_polar: bool = True, with_invalid_points=True) -> PointCloud:
+    def make_pcd_old(self, with_polar: bool = True, with_invalid_points=True) -> PointCloud:
         # All versions have xyzi fields
         fields = ("x", "y", "z", "intensity")
         types = (np.float32, np.float32, np.float32, np.int16)
