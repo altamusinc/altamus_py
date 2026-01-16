@@ -13,7 +13,7 @@ import struct
 import sys
 import time
 from builtins import object, range
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, Union, cast
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, Union
 
 WIRE_PROTOCOL_VERSION = "2.0"
 DIALECT = "mavlink"
@@ -26,9 +26,6 @@ HEADER_LEN_V2 = 10
 MAVLINK_SIGNATURE_BLOCK_LEN = 13
 
 MAVLINK_IFLAG_SIGNED = 0x01
-
-if sys.version_info[0] == 2:
-    logging.basicConfig()
 
 logger = logging.getLogger(__name__)
 
@@ -49,19 +46,32 @@ MAVLINK_TYPE_INT64_T = 8
 MAVLINK_TYPE_FLOAT = 9
 MAVLINK_TYPE_DOUBLE = 10
 
+# CRC calculation using fastcrc, falling back to a pure Python implementation
+# if fastcrc is not available
+try:
+    import fastcrc
+    mcrf4xx = fastcrc.crc16.mcrf4xx
+except Exception:
+    mcrf4xx = None  # type: ignore
 
-class x25crc(object):
+
+BytesLike = Union[List[int], Tuple[int], bytes, bytearray, str]
+
+
+class _x25crc_slow(object):
     """CRC-16/MCRF4XX - based on checksum.h from mavlink library"""
 
-    def __init__(self, buf: Optional[Sequence[int]] = None) -> None:
+    crc: int
+
+    def __init__(self, buf: Optional[BytesLike] = None):
         self.crc = 0xFFFF
         if buf is not None:
             self.accumulate(buf)
 
-    def accumulate(self, buf: Sequence[int]) -> None:
-        """add in some more bytes (it also accepts python2 strings)"""
-        if sys.version_info[0] == 2 and type(buf) is str:
-            buf = bytearray(buf)
+    def accumulate(self, buf: BytesLike) -> None:
+        """add in some more bytes (it also accepts strings)"""
+        if isinstance(buf, str):
+            buf = buf.encode()
 
         accum = self.crc
         for b in buf:
@@ -69,6 +79,28 @@ class x25crc(object):
             tmp = (tmp ^ (tmp << 4)) & 0xFF
             accum = (accum >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4)
         self.crc = accum
+
+
+class _x25crc_fast(object):
+    """CRC-16/MCRF4XX - based on checksum.h from mavlink library"""
+
+    def __init__(self, buf: Optional[BytesLike] = None):
+        self.crc = 0xFFFF
+        if buf is not None:
+            self.accumulate(buf)
+
+    def accumulate(self, buf: BytesLike) -> None:
+        """add in some more bytes (it also accepts strings)"""
+        if isinstance(buf, str):
+            buf_as_bytes = bytes(buf.encode())
+        elif isinstance(buf, (list, tuple, bytearray)):
+            buf_as_bytes = bytes(buf)
+        else:
+            buf_as_bytes = buf
+        self.crc = mcrf4xx(buf_as_bytes, self.crc)
+
+
+x25crc = _x25crc_fast if mcrf4xx is not None else _x25crc_slow
 
 
 class MAVLink_header(object):
@@ -142,10 +174,8 @@ class MAVLink_message(object):
 
     def format_attr(self, field: str) -> Union[str, float, int]:
         """override field getter"""
-        raw_attr = cast(Union[bytes, float, int], getattr(self, field))
+        raw_attr: Union[bytes, float, int] = getattr(self, field)
         if isinstance(raw_attr, bytes):
-            if sys.version_info[0] == 2:
-                return raw_attr.rstrip(b"\x00")
             return raw_attr.decode(errors="backslashreplace").rstrip("\x00")
         return raw_attr
 
@@ -250,10 +280,7 @@ class MAVLink_message(object):
         if float(WIRE_PROTOCOL_VERSION) == 2.0 and not force_mavlink1:
             # in MAVLink2 we can strip trailing zeros off payloads. This allows for simple
             # variable length arrays and smaller packets
-            if sys.version_info[0] == 2:
-                nullbyte = chr(0)
-            else:
-                nullbyte = 0
+            nullbyte = 0
             while plen > 1 and payload[plen - 1] == nullbyte:
                 plen -= 1
         self._payload = payload[:plen]
@@ -325,11 +352,15 @@ class EnumEntry(object):
         self.param: Dict[int, str] = {}
         self.has_location = False
 
+class Enum(Dict[int, EnumEntry]):
+    def __init__(self) -> None:
+        self.bitmask = False
 
-enums: Dict[str, Dict[int, EnumEntry]] = {}
+enums: Dict[str, Enum] = {}
 
 # MAV_RESULT
-enums["MAV_RESULT"] = {}
+enums["MAV_RESULT"] = Enum()
+enums["MAV_RESULT"].bitmask = False
 MAV_RESULT_ACCEPTED = 0
 enums["MAV_RESULT"][0] = EnumEntry(
     "MAV_RESULT_ACCEPTED",
@@ -382,7 +413,8 @@ MAV_RESULT_ENUM_END = 8
 enums["MAV_RESULT"][8] = EnumEntry("MAV_RESULT_ENUM_END", """""")
 
 # MAV_CMD
-enums["MAV_CMD"] = {}
+enums["MAV_CMD"] = Enum()
+enums["MAV_CMD"].bitmask = False
 MAV_CMD_START_EOS_SCAN = 1
 enums["MAV_CMD"][1] = EnumEntry("MAV_CMD_START_EOS_SCAN", """Starts a scan on the targeted scanner. Takes no arguments""")
 enums["MAV_CMD"][1].param[1] = """Reserved (default:0)"""
@@ -495,7 +527,8 @@ MAV_CMD_ENUM_END = 513
 enums["MAV_CMD"][513] = EnumEntry("MAV_CMD_ENUM_END", """""")
 
 # MAV_FTP_OPCODE
-enums["MAV_FTP_OPCODE"] = {}
+enums["MAV_FTP_OPCODE"] = Enum()
+enums["MAV_FTP_OPCODE"].bitmask = False
 MAV_FTP_OPCODE_NONE = 0
 enums["MAV_FTP_OPCODE"][0] = EnumEntry("MAV_FTP_OPCODE_NONE", """None. Ignored, always ACKed""")
 MAV_FTP_OPCODE_TERMINATESESSION = 1
@@ -538,7 +571,8 @@ MAV_FTP_OPCODE_ENUM_END = 130
 enums["MAV_FTP_OPCODE"][130] = EnumEntry("MAV_FTP_OPCODE_ENUM_END", """""")
 
 # GPS_FIX_TYPE
-enums["GPS_FIX_TYPE"] = {}
+enums["GPS_FIX_TYPE"] = Enum()
+enums["GPS_FIX_TYPE"].bitmask = False
 GPS_FIX_TYPE_NO_GPS = 0
 enums["GPS_FIX_TYPE"][0] = EnumEntry("GPS_FIX_TYPE_NO_GPS", """No GPS connected""")
 GPS_FIX_TYPE_NO_FIX = 1
@@ -563,7 +597,8 @@ GPS_FIX_TYPE_ENUM_END = 17
 enums["GPS_FIX_TYPE"][17] = EnumEntry("GPS_FIX_TYPE_ENUM_END", """""")
 
 # EOS_COMPONENT
-enums["EOS_COMPONENT"] = {}
+enums["EOS_COMPONENT"] = Enum()
+enums["EOS_COMPONENT"].bitmask = True
 EOS_COMPONENT_LIDAR = 1
 enums["EOS_COMPONENT"][1] = EnumEntry("EOS_COMPONENT_LIDAR", """""")
 EOS_COMPONENT_YAW_MOTOR = 2
@@ -594,7 +629,8 @@ EOS_COMPONENT_ENUM_END = 4097
 enums["EOS_COMPONENT"][4097] = EnumEntry("EOS_COMPONENT_ENUM_END", """""")
 
 # EOS_STATE
-enums["EOS_STATE"] = {}
+enums["EOS_STATE"] = Enum()
+enums["EOS_STATE"].bitmask = False
 EOS_STATE_IDLE = 1
 enums["EOS_STATE"][1] = EnumEntry("EOS_STATE_IDLE", """""")
 EOS_STATE_UPLOADING = 2
@@ -615,7 +651,8 @@ EOS_STATE_ENUM_END = 9
 enums["EOS_STATE"][9] = EnumEntry("EOS_STATE_ENUM_END", """""")
 
 # EOS_STATE_FLAGS
-enums["EOS_STATE_FLAGS"] = {}
+enums["EOS_STATE_FLAGS"] = Enum()
+enums["EOS_STATE_FLAGS"].bitmask = False
 EOS_STATE_FLAG_LOCAL_CONTROL = 1
 enums["EOS_STATE_FLAGS"][1] = EnumEntry("EOS_STATE_FLAG_LOCAL_CONTROL", """""")
 EOS_STATE_FLAG_HYPERION_AUTHORIZED = 2
@@ -634,7 +671,8 @@ EOS_STATE_FLAGS_ENUM_END = 65
 enums["EOS_STATE_FLAGS"][65] = EnumEntry("EOS_STATE_FLAGS_ENUM_END", """""")
 
 # MOTOR_BEHAVIOR
-enums["MOTOR_BEHAVIOR"] = {}
+enums["MOTOR_BEHAVIOR"] = Enum()
+enums["MOTOR_BEHAVIOR"].bitmask = False
 MOTOR_BEHAVIOR_MOTOR_ENABLE = 1
 enums["MOTOR_BEHAVIOR"][1] = EnumEntry("MOTOR_BEHAVIOR_MOTOR_ENABLE", """""")
 MOTOR_BEHAVIOR_MOTOR_DISABLE = 2
@@ -655,7 +693,8 @@ MOTOR_BEHAVIOR_ENUM_END = 9
 enums["MOTOR_BEHAVIOR"][9] = EnumEntry("MOTOR_BEHAVIOR_ENUM_END", """""")
 
 # EOS_COMPONENT_POWER_BEHAVIOR
-enums["EOS_COMPONENT_POWER_BEHAVIOR"] = {}
+enums["EOS_COMPONENT_POWER_BEHAVIOR"] = Enum()
+enums["EOS_COMPONENT_POWER_BEHAVIOR"].bitmask = False
 EOS_COMPONENT_POWER_BEHAVIOR_ENABLE = 1
 enums["EOS_COMPONENT_POWER_BEHAVIOR"][1] = EnumEntry("EOS_COMPONENT_POWER_BEHAVIOR_ENABLE", """""")
 EOS_COMPONENT_POWER_BEHAVIOR_DISABLE = 2
@@ -666,7 +705,8 @@ EOS_COMPONENT_POWER_BEHAVIOR_ENUM_END = 4
 enums["EOS_COMPONENT_POWER_BEHAVIOR"][4] = EnumEntry("EOS_COMPONENT_POWER_BEHAVIOR_ENUM_END", """""")
 
 # WIFI_CREDIENTIALS_BEHAVIOR
-enums["WIFI_CREDIENTIALS_BEHAVIOR"] = {}
+enums["WIFI_CREDIENTIALS_BEHAVIOR"] = Enum()
+enums["WIFI_CREDIENTIALS_BEHAVIOR"].bitmask = False
 WIFI_CREDIENTIALS_BEHAVIOR_ADD = 1
 enums["WIFI_CREDIENTIALS_BEHAVIOR"][1] = EnumEntry("WIFI_CREDIENTIALS_BEHAVIOR_ADD", """""")
 WIFI_CREDIENTIALS_BEHAVIOR_CLEAR = 2
@@ -679,7 +719,8 @@ WIFI_CREDIENTIALS_BEHAVIOR_ENUM_END = 5
 enums["WIFI_CREDIENTIALS_BEHAVIOR"][5] = EnumEntry("WIFI_CREDIENTIALS_BEHAVIOR_ENUM_END", """""")
 
 # WIFI_AUTH_TYPE
-enums["WIFI_AUTH_TYPE"] = {}
+enums["WIFI_AUTH_TYPE"] = Enum()
+enums["WIFI_AUTH_TYPE"].bitmask = False
 WIFI_AUTH_TYPE_UNSECURED = 1
 enums["WIFI_AUTH_TYPE"][1] = EnumEntry("WIFI_AUTH_TYPE_UNSECURED", """""")
 WIFI_AUTH_TYPE_WEP = 2
@@ -692,7 +733,8 @@ WIFI_AUTH_TYPE_ENUM_END = 5
 enums["WIFI_AUTH_TYPE"][5] = EnumEntry("WIFI_AUTH_TYPE_ENUM_END", """""")
 
 # SCAN_STOP_REASON
-enums["SCAN_STOP_REASON"] = {}
+enums["SCAN_STOP_REASON"] = Enum()
+enums["SCAN_STOP_REASON"].bitmask = True
 SCAN_STOP_REASON_INCOMPLETE = 1
 enums["SCAN_STOP_REASON"][1] = EnumEntry("SCAN_STOP_REASON_INCOMPLETE", """""")
 SCAN_STOP_REASON_PITCH_HOME_ERROR = 2
@@ -725,7 +767,8 @@ SCAN_STOP_REASON_ENUM_END = 8193
 enums["SCAN_STOP_REASON"][8193] = EnumEntry("SCAN_STOP_REASON_ENUM_END", """""")
 
 # SCAN_START_REASON
-enums["SCAN_START_REASON"] = {}
+enums["SCAN_START_REASON"] = Enum()
+enums["SCAN_START_REASON"].bitmask = True
 SCAN_START_REASON_LOCAL_APP = 1
 enums["SCAN_START_REASON"][1] = EnumEntry("SCAN_START_REASON_LOCAL_APP", """""")
 SCAN_START_REASON_WEB = 2
@@ -736,7 +779,8 @@ SCAN_START_REASON_ENUM_END = 5
 enums["SCAN_START_REASON"][5] = EnumEntry("SCAN_START_REASON_ENUM_END", """""")
 
 # SCAN_RESULT_INFO_TYPE
-enums["SCAN_RESULT_INFO_TYPE"] = {}
+enums["SCAN_RESULT_INFO_TYPE"] = Enum()
+enums["SCAN_RESULT_INFO_TYPE"].bitmask = False
 SCAN_RESULT_INFO_ACTUAL = 1
 enums["SCAN_RESULT_INFO_TYPE"][1] = EnumEntry("SCAN_RESULT_INFO_ACTUAL", """""")
 SCAN_RESULT_INFO_ESTIMATED = 2
@@ -745,7 +789,8 @@ SCAN_RESULT_INFO_TYPE_ENUM_END = 3
 enums["SCAN_RESULT_INFO_TYPE"][3] = EnumEntry("SCAN_RESULT_INFO_TYPE_ENUM_END", """""")
 
 # POWER_INFORMATION_TYPE
-enums["POWER_INFORMATION_TYPE"] = {}
+enums["POWER_INFORMATION_TYPE"] = Enum()
+enums["POWER_INFORMATION_TYPE"].bitmask = False
 POWER_INFORMATION_TYPE_INSTANT = 1
 enums["POWER_INFORMATION_TYPE"][1] = EnumEntry("POWER_INFORMATION_TYPE_INSTANT", """""")
 POWER_INFORMATION_TYPE_AVERAGE = 2
@@ -758,7 +803,8 @@ POWER_INFORMATION_TYPE_ENUM_END = 5
 enums["POWER_INFORMATION_TYPE"][5] = EnumEntry("POWER_INFORMATION_TYPE_ENUM_END", """""")
 
 # MAV_AUTOPILOT
-enums["MAV_AUTOPILOT"] = {}
+enums["MAV_AUTOPILOT"] = Enum()
+enums["MAV_AUTOPILOT"].bitmask = False
 MAV_AUTOPILOT_GENERIC = 0
 enums["MAV_AUTOPILOT"][0] = EnumEntry("MAV_AUTOPILOT_GENERIC", """Generic autopilot, full support for everything""")
 MAV_AUTOPILOT_INVALID = 8
@@ -767,7 +813,8 @@ MAV_AUTOPILOT_ENUM_END = 9
 enums["MAV_AUTOPILOT"][9] = EnumEntry("MAV_AUTOPILOT_ENUM_END", """""")
 
 # MAV_FTP_ERR
-enums["MAV_FTP_ERR"] = {}
+enums["MAV_FTP_ERR"] = Enum()
+enums["MAV_FTP_ERR"].bitmask = False
 MAV_FTP_ERR_NONE = 0
 enums["MAV_FTP_ERR"][0] = EnumEntry("MAV_FTP_ERR_NONE", """None: No error""")
 MAV_FTP_ERR_FAIL = 1
@@ -798,7 +845,8 @@ MAV_FTP_ERR_ENUM_END = 11
 enums["MAV_FTP_ERR"][11] = EnumEntry("MAV_FTP_ERR_ENUM_END", """""")
 
 # MAV_TYPE
-enums["MAV_TYPE"] = {}
+enums["MAV_TYPE"] = Enum()
+enums["MAV_TYPE"].bitmask = False
 MAV_TYPE_GENERIC = 0
 enums["MAV_TYPE"][0] = EnumEntry("MAV_TYPE_GENERIC", """Generic micro air vehicle""")
 MAV_TYPE_FIXED_WING = 1
@@ -819,7 +867,8 @@ MAV_TYPE_ENUM_END = 31
 enums["MAV_TYPE"][31] = EnumEntry("MAV_TYPE_ENUM_END", """""")
 
 # MAV_SEVERITY
-enums["MAV_SEVERITY"] = {}
+enums["MAV_SEVERITY"] = Enum()
+enums["MAV_SEVERITY"].bitmask = False
 MAV_SEVERITY_EMERGENCY = 0
 enums["MAV_SEVERITY"][0] = EnumEntry("MAV_SEVERITY_EMERGENCY", """System is unusable. This is a "panic" condition.""")
 MAV_SEVERITY_ALERT = 1
@@ -840,7 +889,8 @@ MAV_SEVERITY_ENUM_END = 8
 enums["MAV_SEVERITY"][8] = EnumEntry("MAV_SEVERITY_ENUM_END", """""")
 
 # MAV_MODE_FLAG
-enums["MAV_MODE_FLAG"] = {}
+enums["MAV_MODE_FLAG"] = Enum()
+enums["MAV_MODE_FLAG"].bitmask = True
 MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1
 enums["MAV_MODE_FLAG"][1] = EnumEntry("MAV_MODE_FLAG_CUSTOM_MODE_ENABLED", """0b00000001 Reserved for future use.""")
 MAV_MODE_FLAG_TEST_ENABLED = 2
@@ -861,7 +911,8 @@ MAV_MODE_FLAG_ENUM_END = 129
 enums["MAV_MODE_FLAG"][129] = EnumEntry("MAV_MODE_FLAG_ENUM_END", """""")
 
 # MAV_MODE_FLAG_DECODE_POSITION
-enums["MAV_MODE_FLAG_DECODE_POSITION"] = {}
+enums["MAV_MODE_FLAG_DECODE_POSITION"] = Enum()
+enums["MAV_MODE_FLAG_DECODE_POSITION"].bitmask = True
 MAV_MODE_FLAG_DECODE_POSITION_CUSTOM_MODE = 1
 enums["MAV_MODE_FLAG_DECODE_POSITION"][1] = EnumEntry("MAV_MODE_FLAG_DECODE_POSITION_CUSTOM_MODE", """Eighth bit: 00000001""")
 MAV_MODE_FLAG_DECODE_POSITION_TEST = 2
@@ -882,7 +933,8 @@ MAV_MODE_FLAG_DECODE_POSITION_ENUM_END = 129
 enums["MAV_MODE_FLAG_DECODE_POSITION"][129] = EnumEntry("MAV_MODE_FLAG_DECODE_POSITION_ENUM_END", """""")
 
 # MAV_STATE
-enums["MAV_STATE"] = {}
+enums["MAV_STATE"] = Enum()
+enums["MAV_STATE"].bitmask = False
 MAV_STATE_UNINIT = 0
 enums["MAV_STATE"][0] = EnumEntry("MAV_STATE_UNINIT", """Uninitialized system, state is unknown.""")
 MAV_STATE_BOOT = 1
@@ -905,7 +957,8 @@ MAV_STATE_ENUM_END = 9
 enums["MAV_STATE"][9] = EnumEntry("MAV_STATE_ENUM_END", """""")
 
 # MAV_COMPONENT
-enums["MAV_COMPONENT"] = {}
+enums["MAV_COMPONENT"] = Enum()
+enums["MAV_COMPONENT"].bitmask = False
 MAV_COMP_ID_ALL = 0
 enums["MAV_COMPONENT"][0] = EnumEntry("MAV_COMP_ID_ALL", """Target id (target_component) used to broadcast messages to all components of the receiving system. Components should attempt to process messages with this component ID and forward to components on any other interfaces. Note: This is not a valid *source* component id for a message.""")
 MAV_COMP_ID_AUTOPILOT1 = 1
@@ -916,7 +969,8 @@ MAV_COMPONENT_ENUM_END = 155
 enums["MAV_COMPONENT"][155] = EnumEntry("MAV_COMPONENT_ENUM_END", """""")
 
 # MAV_MISSION_TYPE
-enums["MAV_MISSION_TYPE"] = {}
+enums["MAV_MISSION_TYPE"] = Enum()
+enums["MAV_MISSION_TYPE"].bitmask = False
 MAV_MISSION_TYPE_MISSION = 0
 enums["MAV_MISSION_TYPE"][0] = EnumEntry("MAV_MISSION_TYPE_MISSION", """Items are mission commands for main mission.""")
 MAV_MISSION_TYPE_FENCE = 1
@@ -929,7 +983,8 @@ MAV_MISSION_TYPE_ENUM_END = 256
 enums["MAV_MISSION_TYPE"][256] = EnumEntry("MAV_MISSION_TYPE_ENUM_END", """""")
 
 # MAV_FRAME
-enums["MAV_FRAME"] = {}
+enums["MAV_FRAME"] = Enum()
+enums["MAV_FRAME"].bitmask = False
 MAV_FRAME_GLOBAL = 0
 enums["MAV_FRAME"][0] = EnumEntry(
     "MAV_FRAME_GLOBAL",
@@ -1036,7 +1091,7 @@ class MAVLink_component_power_control_message(MAVLink_message):
     fieldnames = ["device", "behavior"]
     ordered_fieldnames = ["device", "behavior"]
     fieldtypes = ["uint16_t", "uint8_t"]
-    fielddisplays_by_name: Dict[str, str] = {}
+    fielddisplays_by_name: Dict[str, str] = {"device": "bitmask"}
     fieldenums_by_name: Dict[str, str] = {"device": "EOS_COMPONENT", "behavior": "EOS_COMPONENT_POWER_BEHAVIOR"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<HB")
@@ -1075,7 +1130,7 @@ class MAVLink_system_status_message(MAVLink_message):
     fieldnames = ["state", "power_status_bitmask", "health_status_bitmask", "uptime", "flags"]
     ordered_fieldnames = ["power_status_bitmask", "health_status_bitmask", "uptime", "flags", "state"]
     fieldtypes = ["uint8_t", "uint16_t", "uint16_t", "uint16_t", "uint16_t"]
-    fielddisplays_by_name: Dict[str, str] = {}
+    fielddisplays_by_name: Dict[str, str] = {"power_status_bitmask": "bitmask", "health_status_bitmask": "bitmask"}
     fieldenums_by_name: Dict[str, str] = {"state": "EOS_STATE", "power_status_bitmask": "EOS_COMPONENT", "health_status_bitmask": "EOS_COMPONENT", "flags": "EOS_STATE_FLAGS"}
     fieldunits_by_name: Dict[str, str] = {"uptime": "seconds"}
     native_format = bytearray(b"<HHHHB")
@@ -1164,7 +1219,7 @@ class MAVLink_component_health_test_message(MAVLink_message):
     fieldnames = ["component"]
     ordered_fieldnames = ["component"]
     fieldtypes = ["uint32_t"]
-    fielddisplays_by_name: Dict[str, str] = {}
+    fielddisplays_by_name: Dict[str, str] = {"component": "bitmask"}
     fieldenums_by_name: Dict[str, str] = {"component": "EOS_COMPONENT"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<I")
@@ -1471,7 +1526,7 @@ class MAVLink_motor_control_message(MAVLink_message):
     fieldnames = ["target", "behavior", "motor_rpm", "target_angle", "device_rpm", "steps_count", "vactual"]
     ordered_fieldnames = ["motor_rpm", "target_angle", "device_rpm", "steps_count", "vactual", "target", "behavior"]
     fieldtypes = ["uint8_t", "uint8_t", "float", "float", "float", "int16_t", "int16_t"]
-    fielddisplays_by_name: Dict[str, str] = {}
+    fielddisplays_by_name: Dict[str, str] = {"target": "bitmask"}
     fieldenums_by_name: Dict[str, str] = {"target": "EOS_COMPONENT", "behavior": "MOTOR_BEHAVIOR"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<fffhhBB")
@@ -1516,7 +1571,7 @@ class MAVLink_motor_settings_message(MAVLink_message):
     fieldnames = ["motor", "current", "microsteps", "gearing_ratio", "spread_cycle", "pwm_autoscale", "pwm_autograd", "home_offset_steps", "enforce_minimum_steps", "steps_to_next_index", "usteps_rate", "ustep_angle"]
     ordered_fieldnames = ["gearing_ratio", "usteps_rate", "ustep_angle", "current", "home_offset_steps", "steps_to_next_index", "motor", "microsteps", "spread_cycle", "pwm_autoscale", "pwm_autograd", "enforce_minimum_steps"]
     fieldtypes = ["uint8_t", "uint16_t", "uint8_t", "float", "uint8_t", "uint8_t", "uint8_t", "int16_t", "uint8_t", "uint16_t", "float", "float"]
-    fielddisplays_by_name: Dict[str, str] = {}
+    fielddisplays_by_name: Dict[str, str] = {"motor": "bitmask"}
     fieldenums_by_name: Dict[str, str] = {"motor": "EOS_COMPONENT"}
     fieldunits_by_name: Dict[str, str] = {"usteps_rate": "Hz", "ustep_angle": "deg"}
     native_format = bytearray(b"<fffHhHBBBBBB")
@@ -1565,7 +1620,7 @@ class MAVLink_motor_status_message(MAVLink_message):
     fieldnames = ["motor", "enabled", "homed", "motor_rpm", "device_rpm", "measured_rpm", "vactual", "steps_count", "current_angle"]
     ordered_fieldnames = ["motor_rpm", "device_rpm", "measured_rpm", "current_angle", "vactual", "steps_count", "motor", "enabled", "homed"]
     fieldtypes = ["uint8_t", "uint8_t", "uint8_t", "float", "float", "float", "uint16_t", "int16_t", "float"]
-    fielddisplays_by_name: Dict[str, str] = {}
+    fielddisplays_by_name: Dict[str, str] = {"motor": "bitmask"}
     fieldenums_by_name: Dict[str, str] = {"motor": "EOS_COMPONENT"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<ffffHhBBB")
@@ -1748,7 +1803,7 @@ class MAVLink_scan_result_info_message(MAVLink_message):
     fieldnames = ["type", "num_points", "file_size_bytes", "start_time_unix", "end_time_unix", "scan_duration", "scan_stop_reason", "scan_start_reason"]
     ordered_fieldnames = ["start_time_unix", "end_time_unix", "num_points", "file_size_bytes", "scan_duration", "scan_stop_reason", "scan_start_reason", "type"]
     fieldtypes = ["uint8_t", "uint32_t", "uint32_t", "uint64_t", "uint64_t", "uint32_t", "uint16_t", "uint16_t"]
-    fielddisplays_by_name: Dict[str, str] = {}
+    fielddisplays_by_name: Dict[str, str] = {"scan_stop_reason": "bitmask", "scan_start_reason": "bitmask"}
     fieldenums_by_name: Dict[str, str] = {"type": "SCAN_RESULT_INFO_TYPE", "scan_stop_reason": "SCAN_STOP_REASON", "scan_start_reason": "SCAN_START_REASON"}
     fieldunits_by_name: Dict[str, str] = {"scan_duration": "seconds"}
     native_format = bytearray(b"<QQIIIHHB")
@@ -2716,10 +2771,7 @@ class MAVLink_bad_data(MAVLink_message):
 
     def __str__(self) -> str:
         """Override the __str__ function from MAVLink_messages because non-printable characters are common in to be the reason for this message to exist."""
-        if sys.version_info[0] == 2:
-            hexstr = ["{:x}".format(ord(i)) for i in self.data]
-        else:
-            hexstr = ["{:x}".format(i) for i in self.data]
+        hexstr = ["{:x}".format(i) for i in self.data]
         return "%s {%s, data:%s}" % (self._type, self.reason, hexstr)
 
 
@@ -2737,10 +2789,7 @@ class MAVLink_unknown(MAVLink_message):
 
     def __str__(self) -> str:
         """Override the __str__ function from MAVLink_messages because non-printable characters are common."""
-        if sys.version_info[0] == 2:
-            hexstr = ["{:x}".format(ord(i)) for i in self.data]
-        else:
-            hexstr = ["{:x}".format(i) for i in self.data]
+        hexstr = ["{:x}".format(i) for i in self.data]
         return "%s {data:%s}" % (self._type, hexstr)
 
 
@@ -2760,6 +2809,9 @@ class MAVLinkSigning(object):
         self.unsigned_count = 0
         self.reject_count = 0
 
+
+MAVLinkV1Header = Tuple[bytes, int, int, int, int, int]
+MAVLinkV2Header = Tuple[bytes, int, int, int, int, int, int, int, int]
 
 class MAVLink(object):
     """MAVLink protocol handling class"""
@@ -2864,7 +2916,10 @@ class MAVLink(object):
             magic = self.buf[self.buf_index]
             self.buf_index += 1
             if self.robust_parsing:
-                m = MAVLink_bad_data(bytearray([magic]), "Bad prefix")
+                invalid_prefix_start = self.buf_index - 1
+                while self.buf_len() >= 1 and self.buf[self.buf_index] != PROTOCOL_MARKER_V1 and self.buf[self.buf_index] != PROTOCOL_MARKER_V2:
+                    self.buf_index += 1
+                m = MAVLink_bad_data(self.buf[invalid_prefix_start : self.buf_index], "Bad prefix")
                 self.expected_length = header_len + 2
                 self.total_receive_errors += 1
                 return m
@@ -2876,10 +2931,8 @@ class MAVLink(object):
         self.have_prefix_error = False
         if self.buf_len() >= 3:
             sbuf = self.buf[self.buf_index : 3 + self.buf_index]
-            (magic, self.expected_length, incompat_flags) = cast(
-                Tuple[int, int, int],
-                self.mav20_h3_unpacker.unpack(sbuf),
-            )
+            unpacked_h3: Tuple[int, int, int] = self.mav20_h3_unpacker.unpack(sbuf)
+            magic, self.expected_length, incompat_flags = unpacked_h3
             if magic == PROTOCOL_MARKER_V2 and (incompat_flags & MAVLINK_IFLAG_SIGNED):
                 self.expected_length += MAVLINK_SIGNATURE_BLOCK_LEN
             self.expected_length += header_len + 2
@@ -2920,10 +2973,8 @@ class MAVLink(object):
 
         timestamp_buf = msgbuf[-12:-6]
         link_id = msgbuf[-13]
-        (tlow, thigh) = cast(
-            Tuple[int, int],
-            self.mav_sign_unpacker.unpack(timestamp_buf),
-        )
+        tbytes: Tuple[int, int] = self.mav_sign_unpacker.unpack(timestamp_buf)
+        tlow, thigh = tbytes
         timestamp = tlow + (thigh << 32)
 
         # see if the timestamp is acceptable
@@ -2939,8 +2990,10 @@ class MAVLink(object):
             if timestamp + 6000 * 1000 < self.signing.timestamp:
                 logger.info("bad new stream %s %s", timestamp / (100.0 * 1000 * 60 * 60 * 24 * 365), self.signing.timestamp / (100.0 * 1000 * 60 * 60 * 24 * 365))
                 return False
-            self.signing.stream_timestamps[stream_key] = timestamp
             logger.info("new stream")
+
+        # set the streams timestamp so we reject timestamps that go backwards
+        self.signing.stream_timestamps[stream_key] = timestamp
 
         h = hashlib.new("sha256")
         h.update(self.signing.secret_key)
@@ -2962,26 +3015,21 @@ class MAVLink(object):
         if msgbuf[0] != PROTOCOL_MARKER_V1:
             headerlen = 10
             try:
-                magic, mlen, incompat_flags, compat_flags, seq, srcSystem, srcComponent, msgIdlow, msgIdhigh = cast(
-                    Tuple[bytes, int, int, int, int, int, int, int, int],
-                    self.mav20_unpacker.unpack(msgbuf[:headerlen]),
-                )
+                header_v2: MAVLinkV2Header = self.mav20_unpacker.unpack(msgbuf[:headerlen])
             except struct.error as emsg:
                 raise MAVError("Unable to unpack MAVLink header: %s" % emsg)
+            magic, mlen, incompat_flags, compat_flags, seq, srcSystem, srcComponent, msgIdlow, msgIdhigh = header_v2
             msgId = msgIdlow | (msgIdhigh << 16)
-            mapkey = msgId
         else:
             headerlen = 6
             try:
-                magic, mlen, seq, srcSystem, srcComponent, msgId = cast(
-                    Tuple[bytes, int, int, int, int, int],
-                    self.mav10_unpacker.unpack(msgbuf[:headerlen]),
-                )
-                incompat_flags = 0
-                compat_flags = 0
+                header_v1: MAVLinkV1Header = self.mav10_unpacker.unpack(msgbuf[:headerlen])
             except struct.error as emsg:
                 raise MAVError("Unable to unpack MAVLink header: %s" % emsg)
-            mapkey = msgId
+            magic, mlen, seq, srcSystem, srcComponent, msgId = header_v1
+            incompat_flags = 0
+            compat_flags = 0
+        mapkey = msgId
         if (incompat_flags & MAVLINK_IFLAG_SIGNED) != 0:
             signature_len = MAVLINK_SIGNATURE_BLOCK_LEN
         else:
@@ -3003,10 +3051,7 @@ class MAVLink(object):
 
         # decode the checksum
         try:
-            (crc,) = cast(
-                Tuple[int],
-                self.mav_csum_unpacker.unpack(msgbuf[-(2 + signature_len) :][:2]),
-            )
+            crc: int = self.mav_csum_unpacker.unpack(msgbuf[-(2 + signature_len) :][:2])[0]
         except struct.error as emsg:
             raise MAVError("Unable to unpack MAVLink CRC: %s" % emsg)
         crcbuf = msgbuf[1 : -(2 + signature_len)]
@@ -3053,14 +3098,11 @@ class MAVLink(object):
             raise MAVError("Bad message of type %s length %u needs %s" % (msgtype, len(mbuf), csize))
         mbuf = mbuf[:csize]
         try:
-            t = cast(
-                Tuple[Union[bytes, int, float], ...],
-                msgtype.unpacker.unpack(mbuf),
-            )
+            t: Tuple[Union[bytes, int, float], ...] = msgtype.unpacker.unpack(mbuf)
         except struct.error as emsg:
             raise MAVError("Unable to unpack MAVLink payload type=%s payloadLength=%u: %s" % (msgtype, len(mbuf), emsg))
 
-        tlist: List[Union[bytes, float, int, Sequence[float], Sequence[int]]] = list(t)
+        tlist: List[Union[bytes, float, int, Sequence[Union[bytes, float, int]]]] = list(t)
         # handle sorted fields
         if True:
             if sum(len_map) == len(len_map):
@@ -3078,7 +3120,7 @@ class MAVLink(object):
                     if L == 1 or isinstance(field, bytes):
                         tlist.append(field)
                     else:
-                        tlist.append(cast(Union[Sequence[int], Sequence[float]], list(t[tip : (tip + L)])))
+                        tlist.append(list(t[tip : (tip + L)]))
 
         # terminate any strings
         for i, elem in enumerate(tlist):
