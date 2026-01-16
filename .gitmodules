@@ -1,0 +1,4 @@
+[submodule "altamus_mavlink"]
+	path = altamus_mavlink
+	url = https://github.com/altamusinc/altamus_mavlink
+	branch = master
