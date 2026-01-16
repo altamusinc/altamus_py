@@ -307,8 +307,16 @@ class EosV2BinFile:
     file_path: Path | None = None
     data: bytes | None = None
 
-    @classmethod
-    def from_file(cls, file_path: Path):
+    @staticmethod
+    def from_file(file_path: Path) -> "EosV2BinFile":
+        """
+        Create a EosV2BinFile object from a binary file
+        
+        :param file_path: Path to the EOS binary scan.bin
+        :type file_path: Path
+        :return: EosV2BinFile
+        :rtype: EosV2BinFile
+        """
         data: bytes
         with open(file_path, "rb") as file:
             data = file.read()
@@ -316,30 +324,62 @@ class EosV2BinFile:
             f"Read in {len(data)} bytes from binfile {file_path.as_posix()}")
         return EosV2BinFile(file_path=file_path, data=data)
 
-    @classmethod
-    def from_bytes(cls, data: bytes):
+    @staticmethod
+    def from_bytes(data: bytes) -> "EosV2BinFile":
+        """
+        Generate EosV2BinFile object from bytes, usually as a result from a network request
+        
+        :param data: bytes from an EOS binary file
+        :type data: bytes
+        :return: EosV2BinFile
+        :rtype: EosV2BinFile
+        """
         return EosV2BinFile(file_path=None, data=data)
 
     @property
     def preamble(self) -> Preamble:
+        """
+        Return the Preamble of the binary file. Contains start/stop locations of the blocks of data making up the binary file
+        
+        :return: Binary File Preamble
+        :rtype: Preamble
+        """
         if self.data is None:
             return Preamble()
         return Preamble.from_bytes(self.data)
 
     @property
     def header_bytes(self) -> bytes:
+        """
+        Get the bytes making up the Header portion of the binary file
+        
+        :return: Header bytes
+        :rtype: bytes
+        """
         if self.preamble.header_start is None or self.preamble.header_stop is None or self.data is None:
             return bytes(0)
         return self.data[self.preamble.header_start:self.preamble.header_stop + 1]
 
     @property
     def notes_bytes(self) -> bytes:
+        """
+        Get the bytes making up the Notes portion of the binary file
+        
+        :return: Notes bytes
+        :rtype: bytes
+        """
         if self.preamble.notes_start is None or self.preamble.notes_stop is None or self.data is None:
             return bytes(0)
         return self.data[self.preamble.notes_start:self.preamble.notes_stop + 1]
 
     @property
     def points_bytes(self) -> bytes:
+        """
+        Get the bytes making up the Points portion of the binary file
+        
+        :return: Points bytes
+        :rtype: bytes
+        """
         if self.preamble.points_start is None or self.preamble.points_stop is None or self.data is None:
             return bytes(0)
 
@@ -361,23 +401,36 @@ class EOSV2Scan:
             (0, 4))  # distance, pitch, yaw, intensity
 
     @property
-    def healthy_cartesian_points(self):
-        return None
-    
-    
-    @property
     def healthy_points_count(self) -> int:
+        """
+        Number of healthy points in the scan.
+        
+        :return: healthy points
+        :rtype: int
+        """
         pts = np.where(self.cartesian_points[:, 3] == PointFlags.HEALTHY.value)
         return len(pts[0])
     
     @property
     def no_response_points_count(self) -> int:
+        """
+        Number of No Response points in the scan. No Response points are bad as they indicate the lidar module didn't return any data
+
+        :return: Number of No Response Points
+        :rtype: int
+        """
         pts = np.where(
             self.cartesian_points[:, 3] == PointFlags.NO_RESPONSE.value)
         return len(pts[0])
 
     @property
     def no_return_points_count(self) -> int:
+        """
+        Number of No Return points. No Return points are normal in conditions like pointing at the sky or at water surface. Abnormally high amounts may indicate dirty lens
+        
+        :return: Number of No Return Points
+        :rtype: int
+        """
         pts = np.where(
             self.cartesian_points[:, 3] == PointFlags.NO_RETURN.value)
         return len(pts[0])
@@ -401,13 +454,23 @@ class EOSV2Scan:
     @property
     def combined_points(self) -> np.ndarray:
         """
-        Returns combined polar and carteisan points as numpy array. Columns are: X, Y, Z, Flags, Distance, Pitch, Yaw, Intensity
+        Returns combined polar and carteisan points as numpy array. 
+        Columns are: X, Y, Z, Flags, Distance, Pitch, Yaw, Intensity
         
+        :return: Combined points
+        :rtype: ndarray[shape(number_of_points, 8), dtype[Float32]]
         """
         return np.hstack((self.cartesian_points, self.polar_points))
 
     @property
-    def cartesian_points(self):
+    def cartesian_points(self) -> np.ndarray:
+        """
+        Returns derived cartesian points. Takes into account the scan transform in the header and automatically updates if the transform changes.
+        Columns are: X, Y, Z, Flags
+        
+        :return: Description
+        :rtype: ndarray[shape(number_of_points, 4), dtype[Float32]]
+        """
         def pol2cart(pitch, yaw, distance_cm):
             transform = copy.deepcopy(self.header.scan_transform)
             if transform is None:
@@ -581,26 +644,26 @@ class EOSV2Scan:
         binfile = EosV2BinFile.from_bytes(b)
         return binfile
 
-    @classmethod
-    def _create_points_bytes_from_pcd(cls, point_cloud: PointCloud) -> bytes:
+    @staticmethod
+    def _create_points_bytes_from_pcd(point_cloud: PointCloud) -> bytes:
         polar_data = point_cloud.numpy()[:,-4:] # convert the pcd to numpy, and slice out last 4 columns which are dist, pitch, yaw, intensity
         polar_data = polar_data.astype('<u2') # convert to little endian uint16_t
         return polar_data.tobytes()
 
-    @classmethod
-    def from_pcd(cls, path_to_file: Path):
+    @staticmethod
+    def from_pcd(path_to_file: Path):
         bin_file = EOSV2Scan._pcd_to_binfile(path_to_file)
         return EOSV2Scan.from_bin_file(bin_file)
 
-    @classmethod
-    def from_bin_file(cls, bin_file: EosV2BinFile):
+    @staticmethod
+    def from_bin_file(bin_file: EosV2BinFile):
         scan = EOSV2Scan()
         scan.bin_file = bin_file
         scan._parse_binfile_data()
         return scan
 
-    @classmethod
-    def from_path(cls, path_to_file: Path):
+    @staticmethod
+    def from_path(path_to_file: Path):
         scan = EOSV2Scan()
         scan.bin_file = EosV2BinFile.from_file(path_to_file)
         scan._parse_binfile_data()

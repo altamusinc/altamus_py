@@ -3,3 +3,4 @@ dist/
 *.egg-info
 altamus_py/__pycache__/
 tests/__pycache__/
+tests/sample_files/batch_plant.pcd
