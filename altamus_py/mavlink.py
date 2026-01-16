@@ -16,7 +16,7 @@ from builtins import object, range
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, Union, cast
 
 WIRE_PROTOCOL_VERSION = "2.0"
-DIALECT = "altamus_mavlink_hopeful"
+DIALECT = "mavlink"
 
 PROTOCOL_MARKER_V1 = 0xFE
 PROTOCOL_MARKER_V2 = 0xFD
@@ -1036,7 +1036,7 @@ class MAVLink_component_power_control_message(MAVLink_message):
     fieldnames = ["device", "behavior"]
     ordered_fieldnames = ["device", "behavior"]
     fieldtypes = ["uint16_t", "uint8_t"]
-    fielddisplays_by_name: Dict[str, str] = {"device": "bitmask"}
+    fielddisplays_by_name: Dict[str, str] = {}
     fieldenums_by_name: Dict[str, str] = {"device": "EOS_COMPONENT", "behavior": "EOS_COMPONENT_POWER_BEHAVIOR"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<HB")
@@ -1075,7 +1075,7 @@ class MAVLink_system_status_message(MAVLink_message):
     fieldnames = ["state", "power_status_bitmask", "health_status_bitmask", "uptime", "flags"]
     ordered_fieldnames = ["power_status_bitmask", "health_status_bitmask", "uptime", "flags", "state"]
     fieldtypes = ["uint8_t", "uint16_t", "uint16_t", "uint16_t", "uint16_t"]
-    fielddisplays_by_name: Dict[str, str] = {"power_status_bitmask": "bitmask", "health_status_bitmask": "bitmask"}
+    fielddisplays_by_name: Dict[str, str] = {}
     fieldenums_by_name: Dict[str, str] = {"state": "EOS_STATE", "power_status_bitmask": "EOS_COMPONENT", "health_status_bitmask": "EOS_COMPONENT", "flags": "EOS_STATE_FLAGS"}
     fieldunits_by_name: Dict[str, str] = {"uptime": "seconds"}
     native_format = bytearray(b"<HHHHB")
@@ -1164,7 +1164,7 @@ class MAVLink_component_health_test_message(MAVLink_message):
     fieldnames = ["component"]
     ordered_fieldnames = ["component"]
     fieldtypes = ["uint32_t"]
-    fielddisplays_by_name: Dict[str, str] = {"component": "bitmask"}
+    fielddisplays_by_name: Dict[str, str] = {}
     fieldenums_by_name: Dict[str, str] = {"component": "EOS_COMPONENT"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<I")
@@ -1471,7 +1471,7 @@ class MAVLink_motor_control_message(MAVLink_message):
     fieldnames = ["target", "behavior", "motor_rpm", "target_angle", "device_rpm", "steps_count", "vactual"]
     ordered_fieldnames = ["motor_rpm", "target_angle", "device_rpm", "steps_count", "vactual", "target", "behavior"]
     fieldtypes = ["uint8_t", "uint8_t", "float", "float", "float", "int16_t", "int16_t"]
-    fielddisplays_by_name: Dict[str, str] = {"target": "bitmask"}
+    fielddisplays_by_name: Dict[str, str] = {}
     fieldenums_by_name: Dict[str, str] = {"target": "EOS_COMPONENT", "behavior": "MOTOR_BEHAVIOR"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<fffhhBB")
@@ -1516,7 +1516,7 @@ class MAVLink_motor_settings_message(MAVLink_message):
     fieldnames = ["motor", "current", "microsteps", "gearing_ratio", "spread_cycle", "pwm_autoscale", "pwm_autograd", "home_offset_steps", "enforce_minimum_steps", "steps_to_next_index", "usteps_rate", "ustep_angle"]
     ordered_fieldnames = ["gearing_ratio", "usteps_rate", "ustep_angle", "current", "home_offset_steps", "steps_to_next_index", "motor", "microsteps", "spread_cycle", "pwm_autoscale", "pwm_autograd", "enforce_minimum_steps"]
     fieldtypes = ["uint8_t", "uint16_t", "uint8_t", "float", "uint8_t", "uint8_t", "uint8_t", "int16_t", "uint8_t", "uint16_t", "float", "float"]
-    fielddisplays_by_name: Dict[str, str] = {"motor": "bitmask"}
+    fielddisplays_by_name: Dict[str, str] = {}
     fieldenums_by_name: Dict[str, str] = {"motor": "EOS_COMPONENT"}
     fieldunits_by_name: Dict[str, str] = {"usteps_rate": "Hz", "ustep_angle": "deg"}
     native_format = bytearray(b"<fffHhHBBBBBB")
@@ -1565,7 +1565,7 @@ class MAVLink_motor_status_message(MAVLink_message):
     fieldnames = ["motor", "enabled", "homed", "motor_rpm", "device_rpm", "measured_rpm", "vactual", "steps_count", "current_angle"]
     ordered_fieldnames = ["motor_rpm", "device_rpm", "measured_rpm", "current_angle", "vactual", "steps_count", "motor", "enabled", "homed"]
     fieldtypes = ["uint8_t", "uint8_t", "uint8_t", "float", "float", "float", "uint16_t", "int16_t", "float"]
-    fielddisplays_by_name: Dict[str, str] = {"motor": "bitmask"}
+    fielddisplays_by_name: Dict[str, str] = {}
     fieldenums_by_name: Dict[str, str] = {"motor": "EOS_COMPONENT"}
     fieldunits_by_name: Dict[str, str] = {}
     native_format = bytearray(b"<ffffHhBBB")
@@ -1748,7 +1748,7 @@ class MAVLink_scan_result_info_message(MAVLink_message):
     fieldnames = ["type", "num_points", "file_size_bytes", "start_time_unix", "end_time_unix", "scan_duration", "scan_stop_reason", "scan_start_reason"]
     ordered_fieldnames = ["start_time_unix", "end_time_unix", "num_points", "file_size_bytes", "scan_duration", "scan_stop_reason", "scan_start_reason", "type"]
     fieldtypes = ["uint8_t", "uint32_t", "uint32_t", "uint64_t", "uint64_t", "uint32_t", "uint16_t", "uint16_t"]
-    fielddisplays_by_name: Dict[str, str] = {"scan_stop_reason": "bitmask", "scan_start_reason": "bitmask"}
+    fielddisplays_by_name: Dict[str, str] = {}
     fieldenums_by_name: Dict[str, str] = {"type": "SCAN_RESULT_INFO_TYPE", "scan_stop_reason": "SCAN_STOP_REASON", "scan_start_reason": "SCAN_START_REASON"}
     fieldunits_by_name: Dict[str, str] = {"scan_duration": "seconds"}
     native_format = bytearray(b"<QQIIIHHB")
