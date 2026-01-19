@@ -84,6 +84,49 @@ def evaluate(scan: EOSV2Scan, visualize: bool = False) -> o3d.cpu.pybind.pipelin
         o3d.visualization.draw_geometries([overlap_pcd, primary_pcd])
     return evaluation
 
+
+def adjust_pitch(scan: EOSV2Scan, span: float = 8.0, num_divisions: int = 6, num_iterations: int = 6):
+    def inner(start, stop):
+        step_size = abs(stop - start) / num_divisions
+        val = stop
+        scores = {}
+        for i in range(num_divisions + 1):
+            print(f"iteration #{i} of value {val}")
+            working_transform.pitch_offset = val
+            scan.apply_new_transform_to_scan(working_transform)
+            scores[val] = evaluate(scan).inlier_rmse
+            val -= step_size
+        best_three = dict(sorted(scores.items(), key=lambda x: x[1])[:3])
+        low_angle = sorted(best_three.keys())[0]
+        high_angle = sorted(best_three.keys())[-1]
+        best_angle = list(best_three.items())[0][0]
+        best_score = list(best_three.items())[0][1]
+        return low_angle, high_angle, best_angle, best_score
+
+    scan = copy.deepcopy(scan)
+    starting_transform = copy.deepcopy(scan.header.scan_transform)
+    if starting_transform is None:
+        print("no transform in the header, using a default value")
+        starting_transform = mavlink.MAVLink_scan_transform_message(
+            roll_offset=0, pitch_offset=0, pitch_scale=1.0, yaw_scale=1.0, range_scale=1.0, max_range=18000)
+
+    working_transform = copy.deepcopy(starting_transform)
+    best_score = 100
+    best_angle = None
+    min = -span
+    max = span
+
+    for i in range(num_iterations):
+        new_min, new_max, angle, score = inner(min, max)
+        min = new_min
+        max = new_max
+        if (score < best_score):
+            print(f"New best: {score} : angle {angle}")
+            best_score = score
+            best_angle = angle
+
+    print(f"Final Best: {best_score} and angle {best_angle}")
+
 def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
     scan = copy.deepcopy(scan) # copy the scan so we don't modify the header while we're working
     match parameter:
@@ -163,6 +206,7 @@ transform = copy.deepcopy(scan.header.scan_transform)
 # print("Resetting to 0 for testing")
 # scan.apply_new_transform_to_scan(transform=transform)
 
+adjust_pitch(scan)
 transform.pitch_offset = adjust_parameter(scan, TargetParameter.PITCH)
 scan.apply_new_transform_to_scan(transform=transform)
 # transform.roll_offset = adjust_parameter(scan, TargetParameter.ROLL)
