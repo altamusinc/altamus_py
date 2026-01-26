@@ -1,1 +1,1 @@
-python altamus_mavlink/pymavlink/tools/mavgen.py --lang=Python3 --wire-protocol=2.0 --output=altamus_py/mavlink.py altamus_mavlink/message_definitions/v1.0/altamus.xml
+python altamus_mavlink/pymavlink/tools/mavgen.py --lang=Python3 --wire-protocol=2.0 --output=src/altamus_py/mavlink.py altamus_mavlink/message_definitions/v1.0/altamus.xml

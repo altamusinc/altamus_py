@@ -125,6 +125,7 @@ def adjust_pitch(scan: EOSV2Scan, span: float = 8.0, num_divisions: int = 6, num
             best_score = score
             best_angle = angle
 
+    return best_angle
     print(f"Final Best: {best_score} and angle {best_angle}")
 
 def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
@@ -192,7 +193,8 @@ def adjust_parameter(scan: EOSV2Scan, parameter: TargetParameter) -> float:
     print(f"Best Transform: {best_transform}")
     return getattr(best_transform, attr)
 
-file = Path("./tests/sample_files/batch_plant.bin")
+
+file = Path("./tests/sample_files/test.bin")
 scan = EOSV2Scan.from_path(file)
 print(f"Transform in binfile: {scan.header.scan_transform}")
 transform = copy.deepcopy(scan.header.scan_transform)
@@ -202,11 +204,16 @@ transform = copy.deepcopy(scan.header.scan_transform)
 #     pitch_scale=1.0,
 #     yaw_scale=1.0,
 #     range_scale=1.0,
-#     max_range=18000)
+#     max_range=18000)4
 # print("Resetting to 0 for testing")
 # scan.apply_new_transform_to_scan(transform=transform)
 
-adjust_pitch(scan)
+evaluate(scan, visualize=True)
+transform.pitch_offset = adjust_pitch(scan)
+scan.apply_new_transform_to_scan(transform=transform)
+evaluate(scan, visualize=True)
+exit()
+
 transform.pitch_offset = adjust_parameter(scan, TargetParameter.PITCH)
 scan.apply_new_transform_to_scan(transform=transform)
 # transform.roll_offset = adjust_parameter(scan, TargetParameter.ROLL)

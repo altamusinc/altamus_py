@@ -4,3 +4,5 @@ simplejson
 setuptools
 open3d-cpu
 pymavlink
+build
+twine
