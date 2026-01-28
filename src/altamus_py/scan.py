@@ -401,6 +401,28 @@ class EOSV2Scan:
             (0, 4))  # distance, pitch, yaw, intensity
 
     @property
+    def expected_points_count(self) -> int:
+        """
+        Number of expected points the scan should have based on the scan settings
+        
+        returns 0 if no value can be calcuated
+
+        :return: Number of points expected
+        :rtype: int
+        """
+        settings = self.header.scan_settings
+
+        if settings is None:
+            return 0
+
+        pitch_range = settings.pitch_stop - settings.pitch_start
+        yaw_range = settings.yaw_stop - settings.yaw_start
+        points_per_pitch_rotation = pitch_range / settings.point_spacing
+        number_of_rotations = yaw_range / settings.point_spacing
+        estimated_points = points_per_pitch_rotation * number_of_rotations
+        return int(estimated_points)
+
+    @property
     def healthy_points_count(self) -> int:
         """
         Number of healthy points in the scan.
