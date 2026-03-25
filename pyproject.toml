@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "altamus_py"
-version = "0.1.2"
+version = "0.1.3"
 description = "Library for interacting with EOS2 Scanners and their binary scan files"
 requires-python = ">=3.8"
 dependencies = [

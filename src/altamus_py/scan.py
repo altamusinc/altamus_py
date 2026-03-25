@@ -72,178 +72,175 @@ class Preamble:
 
 @dataclass
 class Header:
-    identifier: mavlink.MAVLink_identifier_message | None = None
-    scan_settings: mavlink.MAVLink_scan_settings_message | None = None
-    scan_transform: mavlink.MAVLink_scan_transform_message | None = None
-    lidar_settings: mavlink.MAVLink_lidar_settings_message | None = None
-    pitch_motor_settings: mavlink.MAVLink_motor_settings_message | None = None
-    yaw_motor_settings: mavlink.MAVLink_motor_settings_message | None = None
-    scan_result: mavlink.MAVLink_scan_result_info_message | None = None
-    orientation: mavlink.MAVLink_orientation_message | None = None
-    average_power: mavlink.MAVLink_power_information_message | None = None
-    minimum_power: mavlink.MAVLink_power_information_message | None = None
-    maximum_power: mavlink.MAVLink_power_information_message | None = None
+    identifier: mavlink.MAVLink_identifier_message
+    scan_settings: mavlink.MAVLink_scan_settings_message
+    scan_transform: mavlink.MAVLink_scan_transform_message
+    lidar_settings: mavlink.MAVLink_lidar_settings_message
+    pitch_motor_settings: mavlink.MAVLink_motor_settings_message
+    yaw_motor_settings: mavlink.MAVLink_motor_settings_message
+    scan_result: mavlink.MAVLink_scan_result_info_message
+    orientation: mavlink.MAVLink_orientation_message
+    average_power: mavlink.MAVLink_power_information_message
+    minimum_power: mavlink.MAVLink_power_information_message
+    maximum_power: mavlink.MAVLink_power_information_message
 
     @classmethod
     def parse_from_bytes(cls, data: bytes, dialect_module):
-        header = Header()
         parser = dialect_module.MAVLink(", 1, 1")
         parsed_mavlink = parser.parse_buffer(data)
-        if parsed_mavlink is None:
-            print("No mavlink parsed, returning empty header")
-            return header
 
-        # Loop through the mavlink messages and extract to a "nice" json structure
-        for chapter in parsed_mavlink:
-            if isinstance(chapter, dialect_module.MAVLink_identifier_message):
-                header.identifier = chapter
-            elif isinstance(chapter, dialect_module.MAVLink_scan_settings_message):
-                header.scan_settings = chapter
-            elif isinstance(chapter, dialect_module.MAVLink_scan_transform_message):
-                header.scan_transform = chapter
-            elif isinstance(chapter, dialect_module.MAVLink_lidar_settings_message):
-                header.lidar_settings = chapter
-            elif isinstance(chapter, dialect_module.MAVLink_motor_settings_message):
-                if (chapter.motor == dialect_module.EOS_COMPONENT_PITCH_MOTOR):
-                    header.pitch_motor_settings = chapter
-                if (chapter.motor == dialect_module.EOS_COMPONENT_YAW_MOTOR):
-                    header.yaw_motor_settings = chapter
-            elif isinstance(chapter, dialect_module.MAVLink_scan_result_info_message):
-                header.scan_result = chapter
-            elif isinstance(chapter, dialect_module.MAVLink_orientation_message):
-                header.orientation = chapter
-            elif isinstance(chapter, dialect_module.MAVLink_power_information_message):
-                if chapter.type == dialect_module.POWER_INFORMATION_TYPE_AVERAGE:
-                    header.average_power = chapter
-                elif chapter.type == dialect_module.POWER_INFORMATION_TYPE_MINIMUM:
-                    header.minimum_power = chapter
-                elif chapter.type == dialect_module.POWER_INFORMATION_TYPE_MAXIMUM:
-                    header.maximum_power = chapter
+        identifier = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_identifier_message)][0]
+        scan_settings = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_scan_settings_message)][0]
+        scan_transform = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_scan_transform_message)][0]
+        lidar_settings = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_lidar_settings_message)][0]
+        pitch_motor_settings = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_motor_settings_message) and n.motor == dialect_module.EOS_COMPONENT_PITCH_MOTOR][0]
+        yaw_motor_settings = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_motor_settings_message) and n.motor == dialect_module.EOS_COMPONENT_YAW_MOTOR][0]
+        scan_result = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_scan_result_info_message)][0]
+        orientation = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_orientation_message)][0]
+        average_power = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_power_information_message) and n.type == dialect_module.POWER_INFORMATION_TYPE_AVERAGE][0]
+        minimum_power = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_power_information_message) and n.type == dialect_module.POWER_INFORMATION_TYPE_MINIMUM][0]
+        maximum_power = [n for n in parsed_mavlink if isinstance(
+            n, dialect_module.MAVLink_power_information_message) and n.type == dialect_module.POWER_INFORMATION_TYPE_MAXIMUM][0]
+
+        header = Header(identifier=identifier, scan_settings=scan_settings, scan_transform=scan_transform, lidar_settings=lidar_settings, pitch_motor_settings=pitch_motor_settings,
+                        yaw_motor_settings=yaw_motor_settings, scan_result=scan_result, orientation=orientation, average_power=average_power, minimum_power=minimum_power, maximum_power=maximum_power)
         return header
 
     @classmethod
     def from_dict(cls, dict: dict):
-        header = Header()
-
         foo = dict.get("header")
         if foo is None:
-            return header
+            raise ValueError("no match for entry 'header' in the parsed dict")
 
         # Get the message data from the dict
-        identifier = foo.get("IDENTIFIER")
-        scan_settings = foo.get("SCAN_SETTINGS")
-        scan_transform = foo.get("SCAN_TRANSFORM")
-        lidar_settings = foo.get("LIDAR_SETTINGS")
-        pitch_motor_settings = foo.get("EOS_COMPONENT_PITCH_MOTOR")
-        yaw_motor_settings = foo.get("EOS_COMPONENT_YAW_MOTOR")
-        scan_result = foo.get("SCAN_RESULT_INFO")
-        orientation = foo.get("ORIENTATION")
-        average_power = foo.get("POWER_INFORMATION_TYPE_AVERAGE")
-        minimum_power = foo.get("POWER_INFORMATION_TYPE_MINIMUM")
-        maximum_power = foo.get("POWER_INFORMATION_TYPE_MAXIMUM")
+        parsed_identifier = foo.get("IDENTIFIER")
+        parsed_scan_settings = foo.get("SCAN_SETTINGS")
+        parsed_scan_transform = foo.get("SCAN_TRANSFORM")
+        parsed_lidar_settings = foo.get("LIDAR_SETTINGS")
+        parsed_pitch_motor_settings = foo.get("EOS_COMPONENT_PITCH_MOTOR")
+        parsed_yaw_motor_settings = foo.get("EOS_COMPONENT_YAW_MOTOR")
+        parsed_scan_result = foo.get("SCAN_RESULT_INFO")
+        parsed_orientation = foo.get("ORIENTATION")
+        parsed_average_power = foo.get("POWER_INFORMATION_TYPE_AVERAGE")
+        parsed_minimum_power = foo.get("POWER_INFORMATION_TYPE_MINIMUM")
+        parsed_maximum_power = foo.get("POWER_INFORMATION_TYPE_MAXIMUM")
 
         # go through each one and create a mavlink object from the data
-        header.identifier = mavlink.MAVLink_identifier_message(
-            fw_version=identifier.get("fw_version"),
-            particle_id=identifier.get("particle_id").encode(),
-            device_id=identifier.get("device_id").encode(),
-            name=identifier.get("name").encode(),
-            local_ip=identifier.get("local_ip"),
-            mac=identifier.get("mac"))
-        header.scan_settings = mavlink.MAVLink_scan_settings_message(
-            yaw_start=scan_settings.get("yaw_start"),
-            yaw_stop=scan_settings.get("yaw_stop"),
-            pitch_start=scan_settings.get("pitch_start"),
-            pitch_stop=scan_settings.get("pitch_stop"),
-            pitch_rest_angle=scan_settings.get("pitch_rest_angle"),
-            point_spacing=scan_settings.get("point_spacing"),
-            scan_speed=scan_settings.get("scan_speed"),
-            scan_stop_reasons=scan_settings.get("scan_stop_reasons"))
-        header.scan_transform = mavlink.MAVLink_scan_transform_message(
-            roll_offset=scan_transform.get("roll_offset"),
-            pitch_offset=scan_transform.get("pitch_offset"),
-            pitch_scale=scan_transform.get("pitch_scale"),
-            yaw_scale=scan_transform.get("yaw_scale"),
-            range_scale=scan_transform.get("range_scale"),
-            max_range=scan_transform.get("max_range"))
-        header.lidar_settings = mavlink.MAVLink_lidar_settings_message(
-            update_rate=lidar_settings.get("update_rate"),
-            fog_mode_enable=lidar_settings.get("fog_mode_enable"),
-            output_disabled_at_boot=lidar_settings.get(
+        identifier = mavlink.MAVLink_identifier_message(
+            fw_version=parsed_identifier.get("fw_version"),
+            particle_id=parsed_identifier.get("particle_id").encode(),
+            device_id=parsed_identifier.get("device_id").encode(),
+            name=parsed_identifier.get("name").encode(),
+            local_ip=parsed_identifier.get("local_ip"),
+            mac=parsed_identifier.get("mac"))
+        scan_settings = mavlink.MAVLink_scan_settings_message(
+            yaw_start=parsed_scan_settings.get("yaw_start"),
+            yaw_stop=parsed_scan_settings.get("yaw_stop"),
+            pitch_start=parsed_scan_settings.get("pitch_start"),
+            pitch_stop=parsed_scan_settings.get("pitch_stop"),
+            pitch_rest_angle=parsed_scan_settings.get("pitch_rest_angle"),
+            point_spacing=parsed_scan_settings.get("point_spacing"),
+            scan_speed=parsed_scan_settings.get("scan_speed"),
+            scan_stop_reasons=parsed_scan_settings.get("scan_stop_reasons"))
+        scan_transform = mavlink.MAVLink_scan_transform_message(
+            roll_offset=parsed_scan_transform.get("roll_offset"),
+            pitch_offset=parsed_scan_transform.get("pitch_offset"),
+            pitch_scale=parsed_scan_transform.get("pitch_scale"),
+            yaw_scale=parsed_scan_transform.get("yaw_scale"),
+            range_scale=parsed_scan_transform.get("range_scale"),
+            max_range=parsed_scan_transform.get("max_range"))
+        lidar_settings = mavlink.MAVLink_lidar_settings_message(
+            update_rate=parsed_lidar_settings.get("update_rate"),
+            fog_mode_enable=parsed_lidar_settings.get("fog_mode_enable"),
+            output_disabled_at_boot=parsed_lidar_settings.get(
                 "output_disabled_at_boot"),
-            firmware_version=lidar_settings.get("firmware_version").encode())
-        header.pitch_motor_settings = mavlink.MAVLink_motor_settings_message(
-            motor=pitch_motor_settings.get("motor"),
-            current=pitch_motor_settings.get("current"),
-            microsteps=pitch_motor_settings.get("microsteps"),
-            gearing_ratio=pitch_motor_settings.get("gearing_ratio"),
-            spread_cycle=pitch_motor_settings.get("spread_cycle"),
-            pwm_autograd=pitch_motor_settings.get("pwm_autograd"),
-            pwm_autoscale=pitch_motor_settings.get("pwm_autoscale"),
-            home_offset_steps=pitch_motor_settings.get("home_offset_steps"),
-            enforce_minimum_steps=pitch_motor_settings.get(
+            firmware_version=parsed_lidar_settings.get("firmware_version").encode())
+        pitch_motor_settings = mavlink.MAVLink_motor_settings_message(
+            motor=parsed_pitch_motor_settings.get("motor"),
+            current=parsed_pitch_motor_settings.get("current"),
+            microsteps=parsed_pitch_motor_settings.get("microsteps"),
+            gearing_ratio=parsed_pitch_motor_settings.get("gearing_ratio"),
+            spread_cycle=parsed_pitch_motor_settings.get("spread_cycle"),
+            pwm_autograd=parsed_pitch_motor_settings.get("pwm_autograd"),
+            pwm_autoscale=parsed_pitch_motor_settings.get("pwm_autoscale"),
+            home_offset_steps=parsed_pitch_motor_settings.get(
+                "home_offset_steps"),
+            enforce_minimum_steps=parsed_pitch_motor_settings.get(
                 "enforce_minimum_steps"),
-            steps_to_next_index=pitch_motor_settings.get(
+            steps_to_next_index=parsed_pitch_motor_settings.get(
                 "steps_to_next_index"),
-            usteps_rate=pitch_motor_settings.get("usteps_rate"),
-            ustep_angle=pitch_motor_settings.get("ustep_angle"))
-        header.yaw_motor_settings = mavlink.MAVLink_motor_settings_message(
-            motor=yaw_motor_settings.get("motor"),
-            current=yaw_motor_settings.get("current"),
-            microsteps=yaw_motor_settings.get("microsteps"),
-            gearing_ratio=yaw_motor_settings.get("gearing_ratio"),
-            spread_cycle=yaw_motor_settings.get("spread_cycle"),
-            pwm_autograd=yaw_motor_settings.get("pwm_autograd"),
-            pwm_autoscale=yaw_motor_settings.get("pwm_autoscale"),
-            home_offset_steps=yaw_motor_settings.get("home_offset_steps"),
-            enforce_minimum_steps=yaw_motor_settings.get(
+            usteps_rate=parsed_pitch_motor_settings.get("usteps_rate"),
+            ustep_angle=parsed_pitch_motor_settings.get("ustep_angle"))
+        yaw_motor_settings = mavlink.MAVLink_motor_settings_message(
+            motor=parsed_yaw_motor_settings.get("motor"),
+            current=parsed_yaw_motor_settings.get("current"),
+            microsteps=parsed_yaw_motor_settings.get("microsteps"),
+            gearing_ratio=parsed_yaw_motor_settings.get("gearing_ratio"),
+            spread_cycle=parsed_yaw_motor_settings.get("spread_cycle"),
+            pwm_autograd=parsed_yaw_motor_settings.get("pwm_autograd"),
+            pwm_autoscale=parsed_yaw_motor_settings.get("pwm_autoscale"),
+            home_offset_steps=parsed_yaw_motor_settings.get(
+                "home_offset_steps"),
+            enforce_minimum_steps=parsed_yaw_motor_settings.get(
                 "enforce_minimum_steps"),
-            steps_to_next_index=yaw_motor_settings.get("steps_to_next_index"),
-            usteps_rate=yaw_motor_settings.get("usteps_rate"),
-            ustep_angle=yaw_motor_settings.get("ustep_angle"))
-        header.scan_result = mavlink.MAVLink_scan_result_info_message(
-            type=scan_result.get("type"),
-            num_points=scan_result.get("num_points"),
-            file_size_bytes=scan_result.get("file_size_bytes"),
-            start_time_unix=scan_result.get("start_time_unix"),
-            end_time_unix=scan_result.get("end_time_unix"),
-            scan_duration=scan_result.get("scan_duration"),
-            scan_stop_reason=scan_result.get("scan_stop_reason"),
-            scan_start_reason=scan_result.get("scan_start_reason"))
-        header.orientation = mavlink.MAVLink_orientation_message(
-            roll=orientation.get("roll"),
-            pitch=orientation.get("pitch"),
-            temp=orientation.get("temp"),
-            xmag=orientation.get("xmag"),
-            ymag=orientation.get("ymag"),
-            zmag=orientation.get("zmag"),
-            heading=orientation.get("heading"),
-            lat=orientation.get("lat"),
-            lon=orientation.get("lon"),
-            h_acc=orientation.get("h_acc"),
-            v_acc=orientation.get("v_acc"),
-            alt=orientation.get("alt"))
-        header.average_power = mavlink.MAVLink_power_information_message(
-            type=average_power.get("type"),
-            current=average_power.get("current"),
-            voltage=average_power.get("voltage"),
-            power=average_power.get("power"),
-            energy_consumed=average_power.get("energy_consumed"),)
-        header.minimum_power = mavlink.MAVLink_power_information_message(
-            type=minimum_power.get("type"),
-            current=minimum_power.get("current"),
-            voltage=minimum_power.get("voltage"),
-            power=minimum_power.get("power"),
-            energy_consumed=minimum_power.get("energy_consumed"),)
-        header.maximum_power = mavlink.MAVLink_power_information_message(
-            type=maximum_power.get("type"),
-            current=maximum_power.get("current"),
-            voltage=maximum_power.get("voltage"),
-            power=maximum_power.get("power"),
-            energy_consumed=maximum_power.get("energy_consumed"),)
+            steps_to_next_index=parsed_yaw_motor_settings.get(
+                "steps_to_next_index"),
+            usteps_rate=parsed_yaw_motor_settings.get("usteps_rate"),
+            ustep_angle=parsed_yaw_motor_settings.get("ustep_angle"))
+        scan_result = mavlink.MAVLink_scan_result_info_message(
+            type=parsed_scan_result.get("type"),
+            num_points=parsed_scan_result.get("num_points"),
+            file_size_bytes=parsed_scan_result.get("file_size_bytes"),
+            start_time_unix=parsed_scan_result.get("start_time_unix"),
+            end_time_unix=parsed_scan_result.get("end_time_unix"),
+            scan_duration=parsed_scan_result.get("scan_duration"),
+            scan_stop_reason=parsed_scan_result.get("scan_stop_reason"),
+            scan_start_reason=parsed_scan_result.get("scan_start_reason"))
+        orientation = mavlink.MAVLink_orientation_message(
+            roll=parsed_orientation.get("roll"),
+            pitch=parsed_orientation.get("pitch"),
+            temp=parsed_orientation.get("temp"),
+            xmag=parsed_orientation.get("xmag"),
+            ymag=parsed_orientation.get("ymag"),
+            zmag=parsed_orientation.get("zmag"),
+            heading=parsed_orientation.get("heading"),
+            lat=parsed_orientation.get("lat"),
+            lon=parsed_orientation.get("lon"),
+            h_acc=parsed_orientation.get("h_acc"),
+            v_acc=parsed_orientation.get("v_acc"),
+            alt=parsed_orientation.get("alt"))
+        average_power = mavlink.MAVLink_power_information_message(
+            type=parsed_average_power.get("type"),
+            current=parsed_average_power.get("current"),
+            voltage=parsed_average_power.get("voltage"),
+            power=parsed_average_power.get("power"),
+            energy_consumed=parsed_average_power.get("energy_consumed"),)
+        minimum_power = mavlink.MAVLink_power_information_message(
+            type=parsed_minimum_power.get("type"),
+            current=parsed_minimum_power.get("current"),
+            voltage=parsed_minimum_power.get("voltage"),
+            power=parsed_minimum_power.get("power"),
+            energy_consumed=parsed_minimum_power.get("energy_consumed"),)
+        maximum_power = mavlink.MAVLink_power_information_message(
+            type=parsed_maximum_power.get("type"),
+            current=parsed_maximum_power.get("current"),
+            voltage=parsed_maximum_power.get("voltage"),
+            power=parsed_maximum_power.get("power"),
+            energy_consumed=parsed_maximum_power.get("energy_consumed"),)
 
         # return the mavlink based header
-        return header
+        return Header(identifier=identifier, scan_settings=scan_settings, scan_transform=scan_transform, lidar_settings=lidar_settings, pitch_motor_settings=pitch_motor_settings,
+                      yaw_motor_settings=yaw_motor_settings, scan_result=scan_result, orientation=orientation, average_power=average_power, minimum_power=minimum_power, maximum_power=maximum_power)
 
     def to_bytes(self) -> bytes:
         b = bytearray()
@@ -401,19 +398,39 @@ class EOSV2Scan:
             (0, 4))  # distance, pitch, yaw, intensity
 
     @property
+    def missing_points_count(self) -> int:
+        """
+        Number of missing points from the scan
+
+        If scan is user cancelled, this returns 0, since we can't trust the estimated count anymore.
+        """
+        return max(0, self.expected_points_count - self.points_count)
+
+    @property
     def expected_points_count(self) -> int:
         """
         Number of expected points the scan should have based on the scan settings
         
-        returns 0 if no value can be calcuated
+        returns 0 if no value can be calculated
+
+        If the scan was canceled, return the actual point count.
 
         :return: Number of points expected
         :rtype: int
         """
-        settings = self.header.scan_settings
+        if self.header.scan_result.scan_stop_reason == mavlink.SCAN_STOP_REASON_USER_CANCELED:
+            return self.points_count
+        return self.calculated_expected_points_count
 
-        if settings is None:
-            return 0
+    @property
+    def calculated_expected_points_count(self) -> int:
+        """
+        Number of points that should have been captured, based on the settings that were used when the scan was started
+
+        :return: Calculated number of points
+        :rtype: int
+        """
+        settings = self.header.scan_settings
 
         pitch_range = settings.pitch_stop - settings.pitch_start
         yaw_range = settings.yaw_stop - settings.yaw_start
@@ -491,7 +508,7 @@ class EOSV2Scan:
     @property
     def combined_points(self) -> np.ndarray:
         """
-        Returns combined polar and carteisan points as numpy array. 
+        Returns combined polar and cartesian points as numpy array. 
         Columns are: X, Y, Z, Flags, Distance, Pitch, Yaw, Intensity
         
         :return: Combined points
@@ -575,13 +592,23 @@ class EOSV2Scan:
         # Reshape to correct shape for easier column based parsing later
         self.polar_points = foo.reshape((numpoints, 4))
 
-    # returns a tuple of [overlap in degrees, beginning_points (low yaw angle), ending_points (high yaw angle)]
+
     @property
-    def yaw_overlap_points(self) -> tuple[float, np.ndarray, np.ndarray]:
+    def yaw_overlap_points(self) -> tuple[float, np.ndarray | None, np.ndarray | None]:
+        """
+        Returns the points from the scan that overlap each other. If overlap is 0, points entries are None
+        format is [overlap in degrees, beginning_points (low yaw angle), ending_points (high yaw angle)]
+
+        :return: Description
+        :rtype: tuple[overlap_degrees: float, beginning_points: np.ndarray | None, ending_points: np.ndarray | None]
+        """
         # creates a boolean index array
         overlap_bool = self.combined_points[:, 6] > (np.pi * 10000)
         # creates new array based on above boolean mask
         overlap_array = self.combined_points[overlap_bool]
+
+        if len(overlap_array) == 0:
+            return (0.0, None, None)
 
         # get min and max yaw values. Subtract them to get the yaw range. This is where we'll select from to get the "primary" points
         overlap_min_yaw = overlap_array[0][6]
@@ -594,7 +621,7 @@ class EOSV2Scan:
         primary_array = self.combined_points[primary_bool]
         return range, primary_array, overlap_array
 
-    def save_annotated_pcd_to_file(self, filename: Path, include_error_points: bool = True):
+    def save_annotated_pcd_to_file(self, filename: Path, include_error_points: bool = True, encoding: PCDEncoding = PCDEncoding.BINARY_COMPRESSED):
         pcd = self.as_pcd(include_error_points)
 
         # Write the header as a comment to the top line of the PCD
@@ -605,7 +632,15 @@ class EOSV2Scan:
         v_file.write(f"\n\r".encode())
 
         # write the pcd file
-        pcd.save(v_file, encoding=Encoding.BINARY_COMPRESSED)
+        enc: Encoding
+        match encoding:
+            case PCDEncoding.BINARY:
+                enc = Encoding.BINARY
+            case PCDEncoding.ASCII:
+                enc = Encoding.ASCII
+            case PCDEncoding.BINARY_COMPRESSED:
+                enc = Encoding.BINARY_COMPRESSED
+        pcd.save(v_file, encoding=enc)
 
         # save to filesystem
         with open(filename, mode="wb") as pcd_file:
