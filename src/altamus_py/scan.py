@@ -423,6 +423,21 @@ class EOSV2Scan:
         return int(estimated_points)
 
     @property
+    def unhealthy_points_count(self) -> int:
+        """
+        Number of unhealthy points in the scan
+
+        defined as any point that has any PointFlags other than HEALTHY
+    
+        
+        :param self: Description
+        :return: unhealthy points 
+        :rtype: int
+        """
+        pts = np.where(self.cartesian_points[:, 3] != PointFlags.HEALTHY.value)
+        return len(pts[0])
+
+    @property
     def healthy_points_count(self) -> int:
         """
         Number of healthy points in the scan.
