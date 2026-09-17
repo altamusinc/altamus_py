@@ -1,4 +1,4 @@
-from enum import Flag, Enum
+from enum import Flag, Enum, IntEnum
 import simplejson
 import struct
 import math
@@ -8,13 +8,32 @@ from dataclasses import dataclass
 import altamus_py.mavlink as mavlink
 import numpy as np
 import copy
+from datetime import datetime, timezone
 from pypcd4.pypcd4 import PointCloud, Encoding
 
+INT32_MAX = 2147483647
 
 class PCDEncoding(Enum):
     ASCII = Encoding.ASCII,
     BINARY = Encoding.BINARY,
     BINARY_COMPRESSED = Encoding.BINARY_COMPRESSED
+
+
+class ScanStopReason(IntEnum):
+    INCOMPLETE = 1
+    PITCH_HOME_ERROR = 2
+    PITCH_INDEX_ERROR = 4
+    PITCH_MAGNET_ERROR = 8
+    YAW_HOME_ERROR = 16
+    YAW_INDEX_ERROR = 32
+    RANGEFINDER_ERROR_DISABLE_OUTPUT = 64
+    RANGEFINDER_ERROR_ENABLE_OUTPUT = 128
+    RANGEFINDER_ERROR_RATE = 256
+    RANGEFINDER_ERROR_SAVE = 512
+    RANGEFINDER_ERROR_FOG = 1024
+    USER_CANCELED = 2048
+    SCAN_TIMEOUT = 4096
+    NORMAL_COMPLETE = 8192
 
 class PointFlags(Flag):
     HEALTHY = 1
@@ -89,28 +108,38 @@ class Header:
         parser = dialect_module.MAVLink(", 1, 1")
         parsed_mavlink = parser.parse_buffer(data)
 
-        identifier = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_identifier_message)][0]
-        scan_settings = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_scan_settings_message)][0]
-        scan_transform = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_scan_transform_message)][0]
-        lidar_settings = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_lidar_settings_message)][0]
-        pitch_motor_settings = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_motor_settings_message) and n.motor == dialect_module.EOS_COMPONENT_PITCH_MOTOR][0]
-        yaw_motor_settings = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_motor_settings_message) and n.motor == dialect_module.EOS_COMPONENT_YAW_MOTOR][0]
-        scan_result = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_scan_result_info_message)][0]
-        orientation = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_orientation_message)][0]
-        average_power = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_power_information_message) and n.type == dialect_module.POWER_INFORMATION_TYPE_AVERAGE][0]
-        minimum_power = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_power_information_message) and n.type == dialect_module.POWER_INFORMATION_TYPE_MINIMUM][0]
-        maximum_power = [n for n in parsed_mavlink if isinstance(
-            n, dialect_module.MAVLink_power_information_message) and n.type == dialect_module.POWER_INFORMATION_TYPE_MAXIMUM][0]
+        identifier = next(msg for msg in parsed_mavlink
+                          if isinstance(msg, dialect_module.MAVLink_identifier_message))
+        scan_settings = next(msg for msg in parsed_mavlink
+                             if isinstance(msg, dialect_module.MAVLink_scan_settings_message))
+        scan_transform = next(msg for msg in parsed_mavlink
+                              if isinstance(msg, dialect_module.MAVLink_scan_transform_message))
+        lidar_settings = next(msg for msg in parsed_mavlink
+                              if isinstance(msg, dialect_module.MAVLink_lidar_settings_message))
+        scan_result = next(msg for msg in parsed_mavlink
+                           if isinstance(msg, dialect_module.MAVLink_scan_result_info_message))
+        orientation = next(msg for msg in parsed_mavlink
+                           if isinstance(msg, dialect_module.MAVLink_orientation_message))
+        pitch_motor_settings = next(msg for msg in parsed_mavlink
+                                    if isinstance(msg, dialect_module.MAVLink_motor_settings_message)
+                                    and msg.motor == dialect_module.EOS_COMPONENT_PITCH_MOTOR)
+        yaw_motor_settings = next(msg for msg in parsed_mavlink
+                                  if isinstance(msg, dialect_module.MAVLink_motor_settings_message)
+                                  and msg.motor == dialect_module.EOS_COMPONENT_YAW_MOTOR)
+        # FIXME the headers for many scanners don't correctly set the average/min/max power on header only "scan start" alerts
+        # If there's no entry for those types, create a default empty message
+        average_power = next((msg for msg in parsed_mavlink
+                              if isinstance(msg, dialect_module.MAVLink_power_information_message)
+                              and msg.type == dialect_module.POWER_INFORMATION_TYPE_AVERAGE),
+                             build_default_power_message(dialect_module.POWER_INFORMATION_TYPE_AVERAGE))
+        minimum_power = next((msg for msg in parsed_mavlink
+                              if isinstance(msg, dialect_module.MAVLink_power_information_message)
+                              and msg.type == dialect_module.POWER_INFORMATION_TYPE_MINIMUM),
+                             build_default_power_message(dialect_module.POWER_INFORMATION_TYPE_MINIMUM))
+        maximum_power = next((msg for msg in parsed_mavlink
+                              if isinstance(msg, dialect_module.MAVLink_power_information_message)
+                              and msg.type == dialect_module.POWER_INFORMATION_TYPE_MAXIMUM),
+                             build_default_power_message(dialect_module.POWER_INFORMATION_TYPE_MAXIMUM))
 
         header = Header(identifier=identifier, scan_settings=scan_settings, scan_transform=scan_transform, lidar_settings=lidar_settings, pitch_motor_settings=pitch_motor_settings,
                         yaw_motor_settings=yaw_motor_settings, scan_result=scan_result, orientation=orientation, average_power=average_power, minimum_power=minimum_power, maximum_power=maximum_power)
@@ -267,7 +296,7 @@ class Header:
         if self.maximum_power is not None:
             b += self.maximum_power.pack(mavlink.MAVLink("", 1, 1))
 
-        return b
+        return bytes(b)
 
     def to_json(self) -> str:
         return simplejson.dumps(self.to_dict_annotated(), ignore_nan=True)
@@ -501,8 +530,24 @@ class EOSV2Scan:
             self.cartesian_points[:, 3] == PointFlags.TOO_FAR.value)
         return len(pts[0])
 
+    def points_distance_above_limit_count(self, limit_cm) -> int:
+        """Returns count of points who's distance readings are above a provided limit, in cm
+
+        :param limit_cm: distance limit in cm
+        :type limit_cm: int
+        :return: number of points above the provided limit
+        :rtype: int
+        """
+        pts = np.where(self.polar_points[:, 0] > limit_cm)
+        return len(pts[0])
+
     @property
     def points_count(self) -> int:
+        """Total number of points in the scan
+
+        :return: number of points in the scan
+        :rtype: int
+        """
         return len(self.polar_points)
 
     @property
@@ -519,10 +564,11 @@ class EOSV2Scan:
     @property
     def cartesian_points(self) -> np.ndarray:
         """
-        Returns derived cartesian points. Takes into account the scan transform in the header and automatically updates if the transform changes.
+        Returns derived cartesian points. Takes into account the scan transform in the
+        header and automatically updates if the transform changes.
         Columns are: X, Y, Z, Flags
         
-        :return: Description
+        :return: Numpy Array of point arrays, each of X, Y, Z, Flags
         :rtype: ndarray[shape(number_of_points, 4), dtype[Float32]]
         """
         def pol2cart(pitch, yaw, distance_cm):
@@ -545,6 +591,7 @@ class EOSV2Scan:
             flags[distance_cm == 65535] = PointFlags.NO_RESPONSE.value
             flags[distance_cm == 0] = PointFlags.NO_RETURN.value
 
+            # TODO add "outlier" logic to see if points are varying too much between readings
             error_mask = flags != PointFlags.HEALTHY.value
             radius_meters = distance_cm / 100.0
             radius_meters[error_mask] = 0.5
@@ -572,6 +619,146 @@ class EOSV2Scan:
         yaw = self.polar_points[:, 2]
         distance = self.polar_points[:, 0]
         return pol2cart(pitch, yaw, distance)
+
+    @property
+    def start_time(self) -> datetime:
+        """Time scan started at, in UTC
+
+        :return: timezone aware datetime in UTC
+        :rtype: datetime
+        """
+        return datetime.fromtimestamp(self.header.scan_result.start_time_unix, timezone.utc)
+
+    @property
+    def end_time(self) -> datetime:
+        """Time scan ended, in UTC
+
+        :return: timezone aware datetime in UTC
+        :rtype: datetime
+        """
+        return datetime.fromtimestamp(self.header.scan_result.end_time_unix, timezone.utc)
+
+    @property
+    def altitude(self) -> float | None:
+        """Return GPS altitude of scan, in meters, or none if no GPS fix was attained
+
+        :return: GPS altitude in meters
+        :rtype: float | None
+        """
+        alt = self.header.orientation.alt
+        if alt == INT32_MAX:
+            return None
+        return alt / 100
+
+    @property
+    def latitude(self) -> float | None:
+        """Return latitude of scan in decimal degrees. If no GPS fix was available, returns None
+
+        :return: latitude in XX.XXXXX decimal degrees format
+        :rtype: float | None
+        """
+        lat = self.header.orientation.lat
+        if lat == INT32_MAX:
+            return None
+        return float(lat) / 10000000
+
+    @property
+    def longitude(self) -> float | None:
+        """Return longitude of scan in decimal degrees. If no GPS fix was available, returns None
+
+        :return: longitude in XX.XXXXX decimal degrees format
+        :rtype: float | None
+        """
+        lon = self.header.orientation.lon
+        if lon == INT32_MAX:
+            return None
+        return float(lon) / 10000000
+
+    @property
+    def heading(self) -> float | None:
+        """Heading in degrees from 0 to 360. If compass was unavailable, returns None
+
+        :return: decimal degrees in the 0-360 degree range
+        :rtype: float | None
+        """
+        heading_rad = self.header.orientation.heading
+        if np.isnan(heading_rad):
+            return None
+        heading_deg = np.rad2deg(heading_rad) % 360.0
+        return float(heading_deg)
+
+    @property
+    def stop_reason(self) -> ScanStopReason:
+        """Returns stop reason for scan in Enum form.
+
+        :return: Enum describing the stop reason
+        :rtype: ScanStopReason
+        """
+        return ScanStopReason(self.header.scan_result.scan_stop_reason)
+
+    @property
+    def roll(self) -> float | None:
+        """Returns roll of scan, in degrees. +/- 180. Returns None if accel was unavailable
+
+        :return: degrees, +/- 180
+        :rtype: float | None
+        """
+        roll_rad = self.header.orientation.roll
+        if np.isnan(roll_rad):
+            return None
+        return np.rad2deg(roll_rad)
+
+    @property
+    def pitch(self) -> float | None:
+        """Returns pitch of scan, in degrees. +/- 180. Returns None if accel was unavailable
+
+        :return: degrees, +/- 180
+        :rtype: float | None
+        """
+        pitch_rad = self.header.orientation.pitch
+        if np.isnan(pitch_rad):
+            return None
+        return np.rad2deg(pitch_rad)
+
+    @property
+    def temperature(self) -> float | None:
+        """Temperature on degrees C. Returns None if thermometer was unavailable
+
+        :return: Temperature in Degrees Centigrade
+        :rtype: float | None
+        """
+        temp = self.header.orientation.temp
+        if np.isnan(temp):
+            return None
+        return temp
+
+    @property
+    def pitch_offset(self) -> float:
+        """Pitch offset applied to each polar point when calculating cartesian values, in decimal degrees
+
+        :return: offset in decimal degrees
+        :rtype: float
+        """
+        return self.header.scan_transform.pitch_offset
+
+    @property
+    def scan_quality(self) -> float:
+        """Returns a 0-100 float percentage of the 'quality' of the scan, based on the
+        number of points with error flags compared to the number of expected or total points
+
+        :return: _description_
+        :rtype: float
+        """
+        # initialize the expected points to the calculated amount from the header/completion type
+        expected_points = self.expected_points_count
+
+        # If the scan captured more points than expected, use that value for calculating the percentage of error points
+        if (self.points_count > self.expected_points_count):
+            expected_points = self.points_count
+
+        unhealthy_points = self.unhealthy_points_count + self.missing_points_count
+        scan_quality = 100 * (1 - (unhealthy_points / expected_points))
+        return scan_quality
 
     def get_filtered_points(self, point_types_to_get: list[PointFlags]):
         values = np.array([member.value for member in point_types_to_get])
@@ -646,7 +833,7 @@ class EOSV2Scan:
         with open(filename, mode="wb") as pcd_file:
             pcd_file.write(v_file.getvalue())
 
-    def as_pcd(self, include_error_points: bool = True) -> PointCloud:
+    def as_pcd(self, include_error_points: bool = True, ) -> PointCloud:
         if include_error_points:
             points = self.combined_points
         else:
@@ -713,7 +900,7 @@ class EOSV2Scan:
         b += header.to_bytes()
         b += points
 
-        binfile = EosV2BinFile.from_bytes(b)
+        binfile = EosV2BinFile.from_bytes(bytes(b))
         return binfile
 
     @staticmethod
@@ -774,3 +961,7 @@ class EOSV2Scan:
         d["POINTS"] = foo
         j = simplejson.dumps(d, ignore_nan=True)
         return j
+
+
+def build_default_power_message(type_enum: int):
+    return mavlink.MAVLink_power_information_message(type=type_enum, current=0, voltage=0, power=0, energy_consumed=0)

@@ -4,9 +4,12 @@ from pathlib import Path
 import tempfile
 import simplejson
 import os
+import numpy as np
 
 class TestFileGeneration(unittest.TestCase):
     def setUp(self) -> None:
+        self.header_only_file = Path(
+            "./tests/sample_files/0a10aced0202194944a023_575_1789651425_scan_id_1170715_header_only.bin")
         self.complete_file = Path("./tests/sample_files/batch_plant.bin")
         self.canceled_file = Path(
             "./tests/sample_files/user_canceled_scan.bin")
@@ -101,6 +104,10 @@ class TestFileGeneration(unittest.TestCase):
         self.assertEqual(canceled_scan.missing_points_count, 0)
         self.assertEqual(canceled_scan.expected_points_count,
                          canceled_scan.points_count)
+
+    def test_parse_header_only(self):
+        scan = EOSV2Scan.from_path(self.header_only_file.absolute())
+        self.assertEqual(1, 1)
 
     def _test_sample_scan_header(self, header: Header):
         # this test is specific to the provided sample "batch_plant.bin" file. If the file changes these might fail
