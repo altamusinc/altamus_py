@@ -5,3 +5,4 @@ tests/__pycache__/
 tests/sample_files/batch_plant.pcd
 token.env
 src/altamus_py/__pycache__/
+tests/sample_files/generated/*
