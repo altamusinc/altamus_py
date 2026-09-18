@@ -23,3 +23,8 @@
 - Add a lot of getters for common values stored in the header
 - Add handling for additional cartesian transform after the initial calibration transform
 - cache the cartesian coordinates instead of making them a property
+
+# 0.1.5
+
+- Add ability to switch cartesian units between feet and meters
+- Make "notes" property cat the power stats on for backwards compatibility with hyperion
