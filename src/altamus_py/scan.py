@@ -10,8 +10,47 @@ import numpy as np
 import copy
 from datetime import datetime, timezone
 from pypcd4.pypcd4 import PointCloud, Encoding
+from pydantic import BaseModel
 
 INT32_MAX = 2147483647
+
+
+class CalibrationPolarTransform(BaseModel):
+    roll_offset_deg: float = 0
+    pitch_offset_deg: float = 0
+    pitch_scale: float = 1.0
+    yaw_scale: float = 1.0
+    range_scale: float = 1.0
+    max_range_meters: float = 180
+
+    @property
+    def roll_offset_rad(self) -> float:
+        return np.radians(self.roll_offset_deg)
+
+    @property
+    def pitch_offset_rad(self) -> float:
+        return np.radians(self.pitch_offset_deg)
+
+
+class LocalSpaceCartesianTransform(BaseModel):
+    mirror: bool = False
+    height_meters: float = 0
+    x_rotate_deg: float = 0
+    y_rotate_deg: float = 0
+    z_rotate_deg: float = 0
+
+    @property
+    def x_rotate_rad(self) -> float:
+        return np.radians(self.x_rotate_deg)
+
+    @property
+    def y_rotate_rad(self) -> float:
+        return np.radians(self.y_rotate_deg)
+
+    @property
+    def z_rotate_rad(self) -> float:
+        return np.radians(self.z_rotate_deg)
+
 
 class PCDEncoding(Enum):
     ASCII = Encoding.ASCII,
@@ -34,6 +73,7 @@ class ScanStopReason(IntEnum):
     USER_CANCELED = 2048
     SCAN_TIMEOUT = 4096
     NORMAL_COMPLETE = 8192
+
 
 class PointFlags(Flag):
     HEALTHY = 1
@@ -327,6 +367,7 @@ class Header:
 
         return j
 
+
 @dataclass
 class EosV2BinFile:
 
@@ -337,7 +378,7 @@ class EosV2BinFile:
     def from_file(file_path: Path) -> "EosV2BinFile":
         """
         Create a EosV2BinFile object from a binary file
-        
+
         :param file_path: Path to the EOS binary scan.bin
         :type file_path: Path
         :return: EosV2BinFile
@@ -354,7 +395,7 @@ class EosV2BinFile:
     def from_bytes(data: bytes) -> "EosV2BinFile":
         """
         Generate EosV2BinFile object from bytes, usually as a result from a network request
-        
+
         :param data: bytes from an EOS binary file
         :type data: bytes
         :return: EosV2BinFile
@@ -366,7 +407,7 @@ class EosV2BinFile:
     def preamble(self) -> Preamble:
         """
         Return the Preamble of the binary file. Contains start/stop locations of the blocks of data making up the binary file
-        
+
         :return: Binary File Preamble
         :rtype: Preamble
         """
@@ -378,7 +419,7 @@ class EosV2BinFile:
     def header_bytes(self) -> bytes:
         """
         Get the bytes making up the Header portion of the binary file
-        
+
         :return: Header bytes
         :rtype: bytes
         """
@@ -390,7 +431,7 @@ class EosV2BinFile:
     def notes_bytes(self) -> bytes:
         """
         Get the bytes making up the Notes portion of the binary file
-        
+
         :return: Notes bytes
         :rtype: bytes
         """
@@ -402,7 +443,7 @@ class EosV2BinFile:
     def points_bytes(self) -> bytes:
         """
         Get the bytes making up the Points portion of the binary file
-        
+
         :return: Points bytes
         :rtype: bytes
         """
@@ -423,6 +464,8 @@ class EOSV2Scan:
         self.bin_file: EosV2BinFile | None
         self.header: Header
         self.notes = ""
+        self._cartesian_transform: LocalSpaceCartesianTransform | None = None
+        self._cartesian_points: np.ndarray | None = None
         self.polar_points: np.ndarray = np.empty(
             (0, 4))  # distance, pitch, yaw, intensity
 
@@ -439,7 +482,7 @@ class EOSV2Scan:
     def expected_points_count(self) -> int:
         """
         Number of expected points the scan should have based on the scan settings
-        
+
         returns 0 if no value can be calculated
 
         If the scan was canceled, return the actual point count.
@@ -474,8 +517,8 @@ class EOSV2Scan:
         Number of unhealthy points in the scan
 
         defined as any point that has any PointFlags other than HEALTHY
-    
-        
+
+
         :param self: Description
         :return: unhealthy points 
         :rtype: int
@@ -487,13 +530,13 @@ class EOSV2Scan:
     def healthy_points_count(self) -> int:
         """
         Number of healthy points in the scan.
-        
+
         :return: healthy points
         :rtype: int
         """
         pts = np.where(self.cartesian_points[:, 3] == PointFlags.HEALTHY.value)
         return len(pts[0])
-    
+
     @property
     def no_response_points_count(self) -> int:
         """
@@ -510,7 +553,7 @@ class EOSV2Scan:
     def no_return_points_count(self) -> int:
         """
         Number of No Return points. No Return points are normal in conditions like pointing at the sky or at water surface. Abnormally high amounts may indicate dirty lens
-        
+
         :return: Number of No Return Points
         :rtype: int
         """
@@ -555,38 +598,37 @@ class EOSV2Scan:
         """
         Returns combined polar and cartesian points as numpy array. 
         Columns are: X, Y, Z, Flags, Distance, Pitch, Yaw, Intensity
-        
+
         :return: Combined points
         :rtype: ndarray[shape(number_of_points, 8), dtype[Float32]]
         """
         return np.hstack((self.cartesian_points, self.polar_points))
 
     @property
-    def cartesian_points(self) -> np.ndarray:
+    def cartesian_points(self):
+        if self._cartesian_points is None:
+            self._cartesian_points = self.generate_cartesian_points()
+            print("Generating cartesian points")
+        return self._cartesian_points
+
+    def generate_cartesian_points(self) -> np.ndarray:
         """
         Returns derived cartesian points. Takes into account the scan transform in the
         header and automatically updates if the transform changes.
         Columns are: X, Y, Z, Flags
-        
+
         :return: Numpy Array of point arrays, each of X, Y, Z, Flags
         :rtype: ndarray[shape(number_of_points, 4), dtype[Float32]]
         """
-        def pol2cart(pitch, yaw, distance_cm):
-            transform = copy.deepcopy(self.header.scan_transform)
-            if transform is None:
-                print("no transform in the header, using a default value")
-                transform = mavlink.MAVLink_scan_transform_message(
-                    roll_offset=0,
-                    pitch_offset=0,
-                    pitch_scale=1.0,
-                    yaw_scale=1.0,
-                    range_scale=1.0,
-                    max_range=18000)
-
+        def polar_to_cartesian(pitch,
+                               yaw,
+                               distance_cm,
+                               calibration_transform: CalibrationPolarTransform,
+                               cartesian_transform: LocalSpaceCartesianTransform | None = None):
             flags = np.full(shape=pitch.shape,
                             fill_value=PointFlags.HEALTHY.value)
             # TODO order is too important here, if we don't do it exactly like this they'll overwrite each other
-            flags[distance_cm > transform.max_range] = PointFlags.TOO_FAR.value
+            flags[distance_cm > (calibration_transform.max_range_meters * 100)] = PointFlags.TOO_FAR.value
             flags[distance_cm < 100] = PointFlags.TOO_CLOSE.value
             flags[distance_cm == 65535] = PointFlags.NO_RESPONSE.value
             flags[distance_cm == 0] = PointFlags.NO_RETURN.value
@@ -597,28 +639,45 @@ class EOSV2Scan:
             radius_meters[error_mask] = 0.5
             pitch_radians = pitch / 10000
             yaw_radians = yaw / 10000
-            roll_offset_radians = np.radians(
-                transform.roll_offset)
-            pitch_offset_radians = np.radians(
-                transform.pitch_offset)
+            roll_offset_radians = calibration_transform.roll_offset_rad
+            pitch_adjusted_radians = pitch_radians + calibration_transform.pitch_offset_rad
 
-            pitch_adjusted_radians = pitch_radians + pitch_offset_radians
-
-            x = np.cos(yaw_radians) * np.sin(pitch_adjusted_radians) * np.cos(
-                roll_offset_radians) + np.sin(yaw_radians) * np.sin(roll_offset_radians)
-            y = np.sin(yaw_radians) * np.sin(pitch_adjusted_radians) * np.cos(
-                roll_offset_radians) - np.cos(yaw_radians) * np.sin(roll_offset_radians)
-            z = np.cos(pitch_adjusted_radians) * np.cos(roll_offset_radians)
+            x = (np.cos(yaw_radians) *
+                 np.sin(pitch_adjusted_radians) *
+                 np.cos(roll_offset_radians) +
+                 np.sin(yaw_radians) *
+                 np.sin(roll_offset_radians))
+            y = (np.sin(yaw_radians) *
+                 np.sin(pitch_adjusted_radians) *
+                 np.cos(roll_offset_radians) -
+                 np.cos(yaw_radians) *
+                 np.sin(roll_offset_radians))
+            z = (np.cos(pitch_adjusted_radians) *
+                 np.cos(roll_offset_radians))
 
             x = x * radius_meters
             y = y * radius_meters
             z = z * radius_meters
+
+            if cartesian_transform is not None:
+                t = cartesian_transform
+
+            # Pre-calculate sine and cosine values for clarity
+                cos_x, sin_x = np.cos(t.x_rotate_rad), np.sin(t.x_rotate_rad)
+                cos_y, sin_y = np.cos(t.y_rotate_rad), np.sin(t.y_rotate_rad)
+                cos_z, sin_z = np.cos(t.z_rotate_rad), np.sin(t.z_rotate_rad)
+
+                x_new = ((((y * sin_x + z * cos_x) * sin_y) + (x * cos_y)) * cos_z) - (y * cos_x - z * sin_x * sin_z)
+                y_new = ((((y * sin_x + z * cos_x) * sin_y) + (x * cos_y)) * sin_z) + ((y * cos_x - z * sin_x) * cos_z)
+                z_new = ((y * sin_x + z * cos_x) * cos_y) - (x * sin_y)
+                x, y, z = x_new, y_new, z_new
+
             return np.stack((x, y, z, flags), axis=1)
 
         pitch = self.polar_points[:, 1]
         yaw = self.polar_points[:, 2]
         distance = self.polar_points[:, 0]
-        return pol2cart(pitch, yaw, distance)
+        return polar_to_cartesian(pitch, yaw, distance, self.calibration_transform, self.cartesian_transform)
 
     @property
     def start_time(self) -> datetime:
@@ -767,8 +826,39 @@ class EOSV2Scan:
         filtered = self.combined_points[mask]
         return filtered
 
-    def apply_new_transform_to_scan(self, transform: mavlink.MAVLink_scan_transform_message):
-        self.header.scan_transform = transform
+    @property
+    def calibration_transform(self) -> CalibrationPolarTransform:
+        if self.header.scan_transform is None:
+            return CalibrationPolarTransform()
+        else:
+            return CalibrationPolarTransform(
+                pitch_offset_deg=self.header.scan_transform.pitch_offset,
+                roll_offset_deg=self.header.scan_transform.roll_offset,
+                pitch_scale=self.header.scan_transform.pitch_scale,
+                yaw_scale=self.header.scan_transform.yaw_scale,
+                max_range_meters=float(self.header.scan_transform.max_range) / 100
+            )
+
+    @calibration_transform.setter
+    def calibration_transform(self, transform: CalibrationPolarTransform):
+        self.header.scan_transform = mavlink.MAVLink_scan_transform_message(roll_offset=transform.roll_offset_deg,
+                                                                            pitch_offset=transform.pitch_offset_deg,
+                                                                            pitch_scale=transform.pitch_scale,
+                                                                            yaw_scale=transform.yaw_scale,
+                                                                            range_scale=transform.range_scale,
+                                                                            max_range=int(transform.max_range_meters / 100))
+        print("Updated scan transform, re-generating cartesian points")
+        self._cartesian_points = self.generate_cartesian_points()
+
+    @property
+    def cartesian_transform(self) -> LocalSpaceCartesianTransform | None:
+        return self._cartesian_transform
+
+    @cartesian_transform.setter
+    def cartesian_transform(self, transform):
+        self._cartesian_transform = transform
+        print("Updated cartesian transform, re-generating cartesian points")
+        self._cartesian_points = self.generate_cartesian_points()
 
     def _parse_polar_points_from_bytes(self, data: bytes):
 
@@ -778,7 +868,6 @@ class EOSV2Scan:
 
         # Reshape to correct shape for easier column based parsing later
         self.polar_points = foo.reshape((numpoints, 4))
-
 
     @property
     def yaw_overlap_points(self) -> tuple[float, np.ndarray | None, np.ndarray | None]:
@@ -804,7 +893,8 @@ class EOSV2Scan:
         # print(f"Overlap Range of {range}")
 
         # Get all points who's yaw is under the max value of the overlap minus 180 degrees (Pi)
-        primary_bool = self.combined_points[:, 6] < overlap_max_yaw - (np.pi * 10000)
+        primary_bool = self.combined_points[:,
+                                            6] < overlap_max_yaw - (np.pi * 10000)
         primary_array = self.combined_points[primary_bool]
         return range, primary_array, overlap_array
 
@@ -905,8 +995,10 @@ class EOSV2Scan:
 
     @staticmethod
     def _create_points_bytes_from_pcd(point_cloud: PointCloud) -> bytes:
-        polar_data = point_cloud.numpy()[:,-4:] # convert the pcd to numpy, and slice out last 4 columns which are dist, pitch, yaw, intensity
-        polar_data = polar_data.astype('<u2') # convert to little endian uint16_t
+        # convert the pcd to numpy, and slice out last 4 columns which are dist, pitch, yaw, intensity
+        polar_data = point_cloud.numpy()[:, -4:]
+        # convert to little endian uint16_t
+        polar_data = polar_data.astype('<u2')
         return polar_data.tobytes()
 
     @staticmethod
@@ -964,4 +1056,8 @@ class EOSV2Scan:
 
 
 def build_default_power_message(type_enum: int):
-    return mavlink.MAVLink_power_information_message(type=type_enum, current=0, voltage=0, power=0, energy_consumed=0)
+    return mavlink.MAVLink_power_information_message(type=type_enum,
+                                                     current=0,
+                                                     voltage=0,
+                                                     power=0,
+                                                     energy_consumed=0)

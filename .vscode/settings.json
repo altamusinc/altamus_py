@@ -10,5 +10,31 @@
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src"
     ],
-    "cmake.sourceDirectory": "/home/wdueease/code/altamus_py/altamus_mavlink"
+    "cmake.sourceDirectory": "/home/wdueease/code/altamus_py/altamus_mavlink",
+    "cSpell.words": [
+        "altamus",
+        "EOSV",
+        "eulers",
+        "frombuffer",
+        "lookat",
+        "mavlink",
+        "mavpackettype",
+        "microsteps",
+        "pypcd",
+        "rtype",
+        "tobytes",
+        "ustep",
+        "usteps",
+        "xmag",
+        "ymag",
+        "zmag"
+    ],
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "ms-python.autopep8"
+    },
+    "autopep8.args": [
+        "--max-line-length=120"
+    ]
 }
