@@ -667,7 +667,7 @@ class EOSV2Scan:
                 cos_y, sin_y = np.cos(t.y_rotate_rad), np.sin(t.y_rotate_rad)
                 cos_z, sin_z = np.cos(t.z_rotate_rad), np.sin(t.z_rotate_rad)
 
-                x_new = ((((y * sin_x + z * cos_x) * sin_y) + (x * cos_y)) * cos_z) - (y * cos_x - z * sin_x * sin_z)
+                x_new = ((((y * sin_x + z * cos_x) * sin_y) + (x * cos_y)) * cos_z) - ((y * cos_x - z * sin_x) * sin_z)
                 y_new = ((((y * sin_x + z * cos_x) * sin_y) + (x * cos_y)) * sin_z) + ((y * cos_x - z * sin_x) * cos_z)
                 z_new = ((y * sin_x + z * cos_x) * cos_y) - (x * sin_y)
                 x, y, z = x_new, y_new, z_new
@@ -841,12 +841,14 @@ class EOSV2Scan:
 
     @calibration_transform.setter
     def calibration_transform(self, transform: CalibrationPolarTransform):
+        if not isinstance(transform, CalibrationPolarTransform):
+            raise ValueError(f"Please provide a CalibrationPolarTransform, received a {type(transform)}")
         self.header.scan_transform = mavlink.MAVLink_scan_transform_message(roll_offset=transform.roll_offset_deg,
                                                                             pitch_offset=transform.pitch_offset_deg,
                                                                             pitch_scale=transform.pitch_scale,
                                                                             yaw_scale=transform.yaw_scale,
                                                                             range_scale=transform.range_scale,
-                                                                            max_range=int(transform.max_range_meters / 100))
+                                                                            max_range=int(transform.max_range_meters * 100))
         print("Updated scan transform, re-generating cartesian points")
         self._cartesian_points = self.generate_cartesian_points()
 
@@ -855,7 +857,9 @@ class EOSV2Scan:
         return self._cartesian_transform
 
     @cartesian_transform.setter
-    def cartesian_transform(self, transform):
+    def cartesian_transform(self, transform: LocalSpaceCartesianTransform):
+        if not isinstance(transform, LocalSpaceCartesianTransform):
+            raise ValueError(f"Please provide a LocalSpaceCartesianTransform, received a {type(transform)}")
         self._cartesian_transform = transform
         print("Updated cartesian transform, re-generating cartesian points")
         self._cartesian_points = self.generate_cartesian_points()

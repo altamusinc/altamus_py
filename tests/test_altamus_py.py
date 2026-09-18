@@ -1,25 +1,65 @@
 import unittest
-from altamus_py.scan import EOSV2Scan, Header, PointFlags, PCDEncoding
+from altamus_py.scan import EOSV2Scan, Header, PointFlags, PCDEncoding, CalibrationPolarTransform, LocalSpaceCartesianTransform
 from pathlib import Path
 import tempfile
 import simplejson
 import os
 import numpy as np
+from enum import Enum
+import copy
+
+
+class GeneratedBackend(Enum):
+    TEMP_DIR = 1
+    LOCAL_DIR = 2
+
+
+backend_type = GeneratedBackend.LOCAL_DIR
 
 class TestFileGeneration(unittest.TestCase):
     def setUp(self) -> None:
         self.header_only_file = Path(
             "./tests/sample_files/0a10aced0202194944a023_575_1789651425_scan_id_1170715_header_only.bin")
         self.complete_file = Path("./tests/sample_files/batch_plant.bin")
-        self.canceled_file = Path(
-            "./tests/sample_files/user_canceled_scan.bin")
-        self.temp_dir = tempfile.TemporaryDirectory()
-        # self.temp_dir_path = Path("./tests/generated_files")
-        self.temp_dir_path = Path(self.temp_dir.name)
+        self.canceled_file = Path("./tests/sample_files/user_canceled_scan.bin")
+
+        match backend_type:
+            case GeneratedBackend.TEMP_DIR:
+                self.temp_dir_path = Path(tempfile.TemporaryDirectory().name)
+            case GeneratedBackend.LOCAL_DIR:
+                self.temp_dir_path = Path("./tests/sample_files/generated")
         print("setting up for tests")
 
     def tearDown(self) -> None:
         print("Tearing down")
+
+    def test_change_transforms(self):
+        scan = EOSV2Scan.from_path(self.complete_file.absolute())
+        original_calibration = copy.deepcopy(scan.calibration_transform)
+
+        normal_path = self.temp_dir_path / "normal.pcd"
+        scan.save_annotated_pcd_to_file(normal_path, encoding=PCDEncoding.ASCII)
+
+        # Modify initial polar->cartesian calibration values
+        polar_modified_path = self.temp_dir_path / "polar_modified.pcd"
+        scan.calibration_transform = CalibrationPolarTransform(max_range_meters=original_calibration.max_range_meters,
+                                                               roll_offset_deg=original_calibration.roll_offset_deg,
+                                                               pitch_offset_deg=original_calibration.pitch_offset_deg + 5.0,
+                                                               pitch_scale=original_calibration.pitch_scale,
+                                                               range_scale=original_calibration.range_scale,
+                                                               yaw_scale=original_calibration.yaw_scale)
+        scan.save_annotated_pcd_to_file(polar_modified_path, encoding=PCDEncoding.ASCII)
+
+        # Modify additional cartesian parameters
+        cartesian_modified_path = self.temp_dir_path / "cartesian_modified.pcd"
+        scan.calibration_transform = original_calibration
+        scan.cartesian_transform = LocalSpaceCartesianTransform(height_meters=0,
+                                                                mirror=False,
+                                                                x_rotate_deg=0,
+                                                                y_rotate_deg=0,
+                                                                z_rotate_deg=0)
+        scan.save_annotated_pcd_to_file(cartesian_modified_path, encoding=PCDEncoding.ASCII)
+        print("Hello")
 
     def test_load_scan_from_bin(self):
         scan = EOSV2Scan.from_path(self.complete_file.absolute())
@@ -29,8 +69,7 @@ class TestFileGeneration(unittest.TestCase):
     def test_create_full_pcd_from_bin_binary_compressed(self):
         pcd_path = self.temp_dir_path / "all_points_binary_compressed.pcd"
         scan = EOSV2Scan.from_path(self.complete_file.absolute())
-        scan.save_annotated_pcd_to_file(
-            pcd_path, encoding=PCDEncoding.BINARY_COMPRESSED)
+        scan.save_annotated_pcd_to_file(pcd_path, encoding=PCDEncoding.BINARY_COMPRESSED)
         
         self.assertTrue(os.path.exists(pcd_path))
         with open(pcd_path, "rb") as f:
@@ -107,7 +146,7 @@ class TestFileGeneration(unittest.TestCase):
 
     def test_parse_header_only(self):
         scan = EOSV2Scan.from_path(self.header_only_file.absolute())
-        self.assertEqual(1, 1)
+        self.assertIsNotNone(scan)
 
     def _test_sample_scan_header(self, header: Header):
         # this test is specific to the provided sample "batch_plant.bin" file. If the file changes these might fail
