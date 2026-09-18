@@ -13,7 +13,10 @@ from pypcd4.pypcd4 import PointCloud, Encoding
 from pydantic import BaseModel
 
 INT32_MAX = 2147483647
-
+FT_TO_CM = 30.48
+FT_TO_M = FT_TO_CM / 100
+M_TO_FT = 1 / FT_TO_M
+CM_TO_FT = 1 / FT_TO_CM
 
 class CalibrationPolarTransform(BaseModel):
     roll_offset_deg: float = 0
@@ -51,6 +54,10 @@ class LocalSpaceCartesianTransform(BaseModel):
     def z_rotate_rad(self) -> float:
         return np.radians(self.z_rotate_deg)
 
+
+class CartesianUnits(Enum):
+    FEET = 1
+    METERS = 2
 
 class PCDEncoding(Enum):
     ASCII = Encoding.ASCII,
@@ -428,6 +435,10 @@ class EosV2BinFile:
         return self.data[self.preamble.header_start:self.preamble.header_stop + 1]
 
     @property
+    def notes(self) -> str:
+        return self.notes_bytes.decode().rstrip('\x00')
+
+    @property
     def notes_bytes(self) -> bytes:
         """
         Get the bytes making up the Notes portion of the binary file
@@ -463,11 +474,12 @@ class EOSV2Scan:
     def __init__(self):
         self.bin_file: EosV2BinFile | None
         self.header: Header
-        self.notes = ""
         self._cartesian_transform: LocalSpaceCartesianTransform | None = None
         self._cartesian_points: np.ndarray | None = None
-        self.polar_points: np.ndarray = np.empty(
-            (0, 4))  # distance, pitch, yaw, intensity
+        self._cartesian_units: CartesianUnits = CartesianUnits.METERS
+        # Used for backwards compatibility, when generating notes to append stats from the power messages
+        self._include_power_in_notes: bool = True
+        self.polar_points: np.ndarray = np.empty((0, 4))  # distance, pitch, yaw, intensity
 
     @property
     def missing_points_count(self) -> int:
@@ -625,8 +637,7 @@ class EOSV2Scan:
                                distance_cm,
                                calibration_transform: CalibrationPolarTransform,
                                cartesian_transform: LocalSpaceCartesianTransform | None = None):
-            flags = np.full(shape=pitch.shape,
-                            fill_value=PointFlags.HEALTHY.value)
+            flags = np.full(shape=pitch.shape, fill_value=PointFlags.HEALTHY.value)
             # TODO order is too important here, if we don't do it exactly like this they'll overwrite each other
             flags[distance_cm > (calibration_transform.max_range_meters * 100)] = PointFlags.TOO_FAR.value
             flags[distance_cm < 100] = PointFlags.TOO_CLOSE.value
@@ -655,9 +666,16 @@ class EOSV2Scan:
             z = (np.cos(pitch_adjusted_radians) *
                  np.cos(roll_offset_radians))
 
-            x = x * radius_meters
-            y = y * radius_meters
-            z = z * radius_meters
+            conversion_multiplier: float
+            match self._cartesian_units:
+                case CartesianUnits.FEET:
+                    conversion_multiplier = M_TO_FT
+                case CartesianUnits.METERS:
+                    conversion_multiplier = 1
+
+            x = (x * radius_meters) * conversion_multiplier
+            y = (y * radius_meters) * conversion_multiplier
+            z = (z * radius_meters) * conversion_multiplier
 
             if cartesian_transform is not None:
                 t = cartesian_transform
@@ -756,6 +774,42 @@ class EOSV2Scan:
         return ScanStopReason(self.header.scan_result.scan_stop_reason)
 
     @property
+    def average_power(self) -> float:
+        return self.header.average_power.power / 1000
+
+    @property
+    def max_power(self) -> float:
+        return self.header.maximum_power.power / 1000
+
+    @property
+    def min_power(self) -> float:
+        return self.header.minimum_power.power / 1000
+
+    @property
+    def average_voltage(self) -> float:
+        return self.header.average_power.voltage / 1000
+
+    @property
+    def max_voltage(self) -> float:
+        return self.header.maximum_power.voltage / 1000
+
+    @property
+    def min_voltage(self) -> float:
+        return self.header.minimum_power.voltage / 1000
+
+    @property
+    def average_current(self) -> float:
+        return self.header.average_power.current / 1000
+
+    @property
+    def max_current(self) -> float:
+        return self.header.maximum_power.current / 1000
+
+    @property
+    def min_current(self) -> float:
+        return self.header.minimum_power.current / 1000
+
+    @property
     def roll(self) -> float | None:
         """Returns roll of scan, in degrees. +/- 180. Returns None if accel was unavailable
 
@@ -827,6 +881,23 @@ class EOSV2Scan:
         return filtered
 
     @property
+    def notes(self) -> str:
+        if self.bin_file is None:
+            return ""
+        binfile_notes = self.bin_file.notes
+        if self._include_power_in_notes:
+            power_notes = (
+                f"Avg: {self.average_voltage:.3f}v | {self.average_current:.3f}a | {self.average_power:.3f}w\n"
+                f"Min: {self.min_voltage:.3f}v | {self.min_current:.3f}a | {self.min_power:.3f}w\n"
+                f"Max: {self.max_voltage:.3f}v | {self.max_current:.3f}a | {self.max_power:.3f}w"
+            )
+            res = binfile_notes + "\n" + power_notes
+            return res
+
+        else:
+            return binfile_notes
+
+    @property
     def calibration_transform(self) -> CalibrationPolarTransform:
         if self.header.scan_transform is None:
             return CalibrationPolarTransform()
@@ -863,6 +934,18 @@ class EOSV2Scan:
         self._cartesian_transform = transform
         print("Updated cartesian transform, re-generating cartesian points")
         self._cartesian_points = self.generate_cartesian_points()
+
+    @property
+    def cartesian_units(self) -> CartesianUnits:
+        return self._cartesian_units
+
+    @cartesian_units.setter
+    def cartesian_units(self, units: CartesianUnits):
+        old = self._cartesian_units
+        self._cartesian_units = units
+        if old != units:
+            print("Units changed, re-generating cartesian")
+            self._cartesian_points = self.generate_cartesian_points()
 
     def _parse_polar_points_from_bytes(self, data: bytes):
 
@@ -902,8 +985,24 @@ class EOSV2Scan:
         primary_array = self.combined_points[primary_bool]
         return range, primary_array, overlap_array
 
-    def save_annotated_pcd_to_file(self, filename: Path, include_error_points: bool = True, encoding: PCDEncoding = PCDEncoding.BINARY_COMPRESSED):
-        pcd = self.as_pcd(include_error_points)
+    def save_annotated_pcd_to_file(self,
+                                   path: Path,
+                                   include_error_points: bool = True,
+                                   units: CartesianUnits = CartesianUnits.METERS,
+                                   encoding: PCDEncoding = PCDEncoding.BINARY_COMPRESSED):
+
+        with open(path, mode="wb") as pcd_file:
+            pcd_file.write(self.as_annotated_pcd_bytes(include_error_points, units, encoding))
+
+    def as_annotated_pcd_bytes(self,
+                               include_error_points: bool = False,
+                               units: CartesianUnits = CartesianUnits.METERS,
+                               encoding: PCDEncoding = PCDEncoding.BINARY_COMPRESSED) -> bytes:
+        # update the units if requested, this will re-generate the correct cartesian points
+        if units != self._cartesian_units:
+            self.cartesian_units = units
+        pcd = self.as_pcd(include_error_points=include_error_points,
+                          units=units)
 
         # Write the header as a comment to the top line of the PCD
         v_file = io.BytesIO()
@@ -922,12 +1021,16 @@ class EOSV2Scan:
             case PCDEncoding.BINARY_COMPRESSED:
                 enc = Encoding.BINARY_COMPRESSED
         pcd.save(v_file, encoding=enc)
+        return v_file.getvalue()
 
-        # save to filesystem
-        with open(filename, mode="wb") as pcd_file:
-            pcd_file.write(v_file.getvalue())
+    def as_pcd(self,
+               include_error_points: bool = False,
+               units: CartesianUnits = CartesianUnits.METERS) -> PointCloud:
+        # update the units if requested, this will re-generate the correct cartesian points
+        if units != self._cartesian_units:
+            self.cartesian_units = units
 
-    def as_pcd(self, include_error_points: bool = True, ) -> PointCloud:
+        # optionally remove points with error flags
         if include_error_points:
             points = self.combined_points
         else:
@@ -963,8 +1066,7 @@ class EOSV2Scan:
 
     @classmethod
     def _find_notes_in_pcd_file(cls, path_to_file: Path) -> str:
-        notes = EOSV2Scan._extract_header_json_from_pcd_file(
-            path_to_file).get("notes")
+        notes = EOSV2Scan._extract_header_json_from_pcd_file(path_to_file).get("notes")
         if notes is None:
             notes = ""
         return notes
@@ -1034,10 +1136,6 @@ class EOSV2Scan:
         if (preamble.header_start is not None and preamble.header_stop is not None):
             self.header = Header.parse_from_bytes(
                 self.bin_file.header_bytes, mavlink)
-
-        # If preamble has notes start/stop, parse them
-        if (preamble.notes_start is not None and preamble.notes_stop is not None):
-            self.notes = self.bin_file.notes_bytes.decode().rstrip('\x00')
 
         # if preamble has points start, parse from there to the end of the file
         if (preamble.points_start is not None):

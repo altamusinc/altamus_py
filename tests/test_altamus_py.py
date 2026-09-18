@@ -1,5 +1,5 @@
 import unittest
-from altamus_py.scan import EOSV2Scan, Header, PointFlags, PCDEncoding, CalibrationPolarTransform, LocalSpaceCartesianTransform
+from altamus_py.scan import *
 from pathlib import Path
 import tempfile
 import simplejson
@@ -33,6 +33,21 @@ class TestFileGeneration(unittest.TestCase):
     def tearDown(self) -> None:
         print("Tearing down")
 
+    def test_change_units(self):
+        scan = EOSV2Scan.from_path(self.complete_file.absolute())
+        meters_path = self.temp_dir_path / "meters.pcd"
+        scan.save_annotated_pcd_to_file(path=meters_path,
+                                        include_error_points=True,
+                                        units=CartesianUnits.METERS,
+                                        encoding=PCDEncoding.ASCII)
+
+        feet_path = self.temp_dir_path / "feet.pcd"
+        scan.save_annotated_pcd_to_file(path=feet_path,
+                                        include_error_points=True,
+                                        units=CartesianUnits.FEET,
+                                        encoding=PCDEncoding.ASCII)
+
+
     def test_change_transforms(self):
         scan = EOSV2Scan.from_path(self.complete_file.absolute())
         original_calibration = copy.deepcopy(scan.calibration_transform)
@@ -59,7 +74,10 @@ class TestFileGeneration(unittest.TestCase):
                                                                 y_rotate_deg=0,
                                                                 z_rotate_deg=0)
         scan.save_annotated_pcd_to_file(cartesian_modified_path, encoding=PCDEncoding.ASCII)
-        print("Hello")
+
+    def test_custom_notes(self):
+        scan = EOSV2Scan.from_path(self.complete_file.absolute())
+        print(scan.notes)
 
     def test_load_scan_from_bin(self):
         scan = EOSV2Scan.from_path(self.complete_file.absolute())
