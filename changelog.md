@@ -28,3 +28,7 @@
 
 - Add ability to switch cartesian units between feet and meters
 - Make "notes" property cat the power stats on for backwards compatibility with hyperion
+
+# 0.1.6
+
+- Additional Z-Offset in local cartesian transform was accidentally left out from the calculations 

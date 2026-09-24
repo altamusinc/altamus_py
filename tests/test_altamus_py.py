@@ -68,7 +68,7 @@ class TestFileGeneration(unittest.TestCase):
         # Modify additional cartesian parameters
         cartesian_modified_path = self.temp_dir_path / "cartesian_modified.pcd"
         scan.calibration_transform = original_calibration
-        scan.cartesian_transform = LocalSpaceCartesianTransform(height_meters=0,
+        scan.cartesian_transform = LocalSpaceCartesianTransform(height_meters=10,
                                                                 mirror=False,
                                                                 x_rotate_deg=0,
                                                                 y_rotate_deg=0,

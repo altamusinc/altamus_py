@@ -684,10 +684,11 @@ class EOSV2Scan:
                 cos_x, sin_x = np.cos(t.x_rotate_rad), np.sin(t.x_rotate_rad)
                 cos_y, sin_y = np.cos(t.y_rotate_rad), np.sin(t.y_rotate_rad)
                 cos_z, sin_z = np.cos(t.z_rotate_rad), np.sin(t.z_rotate_rad)
+                z_offset = cartesian_transform.height_meters * conversion_multiplier
 
                 x_new = ((((y * sin_x + z * cos_x) * sin_y) + (x * cos_y)) * cos_z) - ((y * cos_x - z * sin_x) * sin_z)
                 y_new = ((((y * sin_x + z * cos_x) * sin_y) + (x * cos_y)) * sin_z) + ((y * cos_x - z * sin_x) * cos_z)
-                z_new = ((y * sin_x + z * cos_x) * cos_y) - (x * sin_y)
+                z_new = (((y * sin_x + z * cos_x) * cos_y) - (x * sin_y)) + z_offset
                 x, y, z = x_new, y_new, z_new
 
             return np.stack((x, y, z, flags), axis=1)
